@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Ray</title>
+<style>
+:root {
+  --mood: #FFFFFF;
+  --ink: #232121;
+  --ink-soft: rgba(35, 33, 33, 0.66);
+  --accent: #FF7A45;
+  --glass: rgba(35, 33, 33, 0.06);
+  --glass-strong: rgba(35, 33, 33, 0.13);
+  --line: rgba(35, 33, 33, 0.26);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--mood); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.5; transition: background-color 0.7s ease; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+main { width: 100%; max-width: 640px; height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 28px 20px 20px; }
+.face-wrap { flex: 1 1 0; min-height: 120px; display: flex; align-items: center; justify-content: center; }
+.face-wrap svg { width: 100%; max-width: 520px; max-height: 100%; display: block; }
+.fade { transition: opacity 0.2s ease; }
+.ink-fill { fill: var(--ink); }
+.ink-line { fill: none; stroke: var(--ink); stroke-linecap: round; stroke-linejoin: round; }
+.acc-fill { fill: var(--accent); }
+.acc-line { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-width: 9; }
+.acc-text { fill: var(--accent); font-family: var(--font); font-weight: 800; }
+.status { margin: 0; text-align: center; font-size: 14px; color: var(--ink-soft); min-height: 21px; }
+.talk { flex: 0 1 auto; max-height: 34%; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; text-align: center; }
+.you { margin: 0; font-size: 14px; color: var(--ink-soft); min-height: 21px; overflow-wrap: anywhere; }
+.reply { margin: 0; font-weight: 600; font-size: 22px; line-height: 1.3; overflow-wrap: anywhere; }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.btn { min-height: 44px; padding: 0 18px; border-radius: 22px; border: 1px solid var(--line); background: var(--glass); color: var(--ink); font: inherit; font-size: 15px; font-weight: 500; }
+.btn:active { background: var(--glass-strong); }
+.btn.main { background: var(--ink); color: #FFFFFF; border-color: var(--ink); }
+.btn[aria-pressed="true"] { background: var(--ink); color: #FFFFFF; border-color: var(--ink); }
+#setup { flex: 0 0 auto; max-height: 62%; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+#setup h2 { margin: 0; font-size: 21px; font-weight: 700; line-height: 1.25; }
+#setup p { margin: 0; font-size: 14px; color: var(--ink-soft); }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink-soft); }
+input[type="text"], input[type="email"], input[type="password"], select { height: 46px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: #FFFFFF; color: var(--ink); font: inherit; width: 100%; }
+input[type="range"] { width: 100%; accent-color: var(--ink); }
+.row { display: flex; gap: 10px; }
+.row > * { flex: 1 1 0; }
+.sws { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; justify-items: center; }
+.sw { width: 40px; height: 40px; border-radius: 50%; border: 3px solid #FFFFFF; outline: 1px solid var(--line); padding: 0; }
+.sw[aria-pressed="true"] { outline: 3px solid var(--ink); }
+.voices { display: flex; flex-direction: column; gap: 8px; }
+.voice { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 6px 14px; border-radius: 12px; border: 1px solid var(--line); background: #FFFFFF; color: var(--ink); font: inherit; font-size: 15px; text-align: left; }
+.voice small { color: var(--ink-soft); font-size: 12px; }
+.voice[aria-pressed="true"] { border: 2px solid var(--ink); }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--accent); color: #FFFFFF; white-space: nowrap; }
+.err { color: #B3261E; font-size: 13px; min-height: 18px; margin: 0; }
+.ver { font-size: 12px; color: var(--ink-soft); text-align: center; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { body, .fade { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="face-wrap" id="faceWrap">
+    <svg viewBox="0 0 380 270" role="img" aria-label="Cara de Ray">
+      <g id="face">
+        <ellipse id="ovalL" class="ink-fill fade" cx="149" cy="105" rx="23" ry="45"></ellipse>
+        <ellipse id="ovalR" class="ink-fill fade" cx="231" cy="105" rx="23" ry="45"></ellipse>
+        <path id="arcL" class="ink-line fade" stroke-width="14" opacity="0" d="M124 127 Q149 53 174 127"></path>
+        <path id="arcR" class="ink-line fade" stroke-width="14" opacity="0" d="M206 127 Q231 53 256 127"></path>
+        <path id="mCurve" class="ink-line fade" stroke-width="11" d="M172 200 Q190 218 208 200"></path>
+        <g id="mOpen" class="fade" opacity="0">
+          <path class="ink-fill" d="M158 194 Q190 188 222 194 Q222 242 190 242 Q158 242 158 194 Z"></path>
+          <path class="acc-fill" d="M171 224 Q190 206 209 224 Q203 235 190 235 Q177 235 171 224 Z"></path>
+        </g>
+        <g id="mO" class="fade" opacity="0">
+          <ellipse class="ink-fill" cx="190" cy="214" rx="16" ry="23"></ellipse>
+          <ellipse class="acc-fill" cx="190" cy="215" rx="8.5" ry="14"></ellipse>
+        </g>
+      </g>
+      <g id="deco-feliz" class="fade" opacity="0">
+        <path class="acc-line" d="M86 96 L100 107 M78 126 L98 124 M88 156 L100 144"></path>
+        <path class="acc-line" d="M294 96 L280 107 M302 126 L282 124 M292 156 L280 144"></path>
+      </g>
+      <g id="deco-sorpresa" class="fade" opacity="0"><path class="acc-line" d="M290 44 L298 22 M304 60 L322 48"></path></g>
+      <g id="deco-guino" class="fade" opacity="0"><path class="acc-fill" d="M72 84 Q75 102 93 105 Q75 108 72 126 Q69 108 51 105 Q69 102 72 84 Z"></path></g>
+      <g id="deco-pensando" class="fade" opacity="0"><text class="acc-text" x="282" y="66" font-size="58">?</text></g>
+      <g id="deco-dormido" class="fade" opacity="0">
+        <text class="acc-text" x="286" y="86" font-size="30">z</text>
+        <text class="acc-text" x="308" y="60" font-size="40">z</text>
+      </g>
+    </svg>
+  </div>
+
+  <div id="chat">
+    <p class="status" id="status"></p>
+    <div class="talk">
+      <p class="you" id="you"></p>
+      <p class="reply" id="reply"></p>
+    </div>
+    <div class="bar" style="margin-top:12px;">
+      <button class="btn" id="gear" type="button">Ajustes</button>
+      <button class="btn" id="armed" type="button" aria-pressed="true">Siempre escuchando</button>
+    </div>
+  </div>
+
+  <div id="setup" hidden></div>
+</main>
+<script>
+(function () {
+  var N = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.RayNative) || null;
+  var VERSION = '__RAY_VERSION__';
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  // ---------- Ajustes guardados en el equipo ----------
+  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', model: 'claude-sonnet-5-5', armed: true, rate: 1, pitch: 1 };
+  var cfg = {}, facts = [];
+  (function () {
+    var k, s = null;
+    try { s = JSON.parse(localStorage.getItem('ray_cfg') || 'null'); } catch (e) {}
+    for (k in DEF) cfg[k] = (s && s[k] !== undefined) ? s[k] : DEF[k];
+    try { var f = JSON.parse(localStorage.getItem('ray_facts') || '[]'); if (Array.isArray(f)) facts = f; } catch (e) {}
+  })();
+  function save() { try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {} }
+  function addFact(d) {
+    d = String(d || '').trim().slice(0, 300);
+    if (!d || facts.indexOf(d) >= 0) return;
+    facts.push(d);
+    if (facts.length > 60) facts.shift();
+    try { localStorage.setItem('ray_facts', JSON.stringify(facts)); } catch (e) {}
+  }
+
+  var COUNTRIES = [
+    ['PE', 'Perú', 'es-PE'], ['AR', 'Argentina', 'es-AR'], ['BO', 'Bolivia', 'es-BO'], ['BR', 'Brasil', 'pt-BR'], ['CL', 'Chile', 'es-CL'],
+    ['CO', 'Colombia', 'es-CO'], ['CR', 'Costa Rica', 'es-CR'], ['CU', 'Cuba', 'es-CU'], ['EC', 'Ecuador', 'es-EC'], ['SV', 'El Salvador', 'es-SV'],
+    ['ES', 'España', 'es-ES'], ['US', 'Estados Unidos', 'en-US'], ['GT', 'Guatemala', 'es-GT'], ['HN', 'Honduras', 'es-HN'], ['MX', 'México', 'es-MX'],
+    ['NI', 'Nicaragua', 'es-NI'], ['PA', 'Panamá', 'es-PA'], ['PY', 'Paraguay', 'es-PY'], ['PR', 'Puerto Rico', 'es-PR'], ['DO', 'República Dominicana', 'es-DO'],
+    ['UY', 'Uruguay', 'es-UY'], ['VE', 'Venezuela', 'es-VE'], ['DE', 'Alemania', 'de-DE'], ['CA', 'Canadá', 'en-CA'], ['CN', 'China', 'zh-CN'],
+    ['KR', 'Corea del Sur', 'ko-KR'], ['FR', 'Francia', 'fr-FR'], ['IN', 'India', 'hi-IN'], ['IT', 'Italia', 'it-IT'], ['JP', 'Japón', 'ja-JP'],
+    ['PT', 'Portugal', 'pt-PT'], ['GB', 'Reino Unido', 'en-GB'], ['RU', 'Rusia', 'ru-RU'], ['OT', 'Otro país', '']
+  ];
+  var COLORS = ['#FF7A45', '#FFC233', '#3DBE7B', '#18B8A6', '#38A9F0', '#3D6BF0', '#FF5FA2', '#E5484D', '#8A5A3C', '#7A8794', '#F2A900', '#00A86B'];
+  var SAMPLE = { es: 'Hola, soy Ray. Así sueno con esta voz.', en: 'Hi, I am Ray. This is how I sound with this voice.', pt: 'Olá, eu sou o Ray. É assim que eu falo com esta voz.', fr: 'Bonjour, je suis Ray. Voici ma voix.', it: 'Ciao, sono Ray. Questa è la mia voce.', de: 'Hallo, ich bin Ray. So klinge ich mit dieser Stimme.' };
+  function countryName(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][1]; return ''; }
+  function countryLocale(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][2]; return ''; }
+  function langOf(tag) { return String(tag || '').split('-')[0].toLowerCase(); }
+  function langLabel(tag) {
+    try { var a = new Intl.DisplayNames(['es'], { type: 'language' }).of(tag); if (a) return a.charAt(0).toUpperCase() + a.slice(1); } catch (e) {}
+    return tag;
+  }
+
+  // ---------- Cara ----------
+  var BASE = { eyeL: 'oval', eyeR: 'oval', ew: 23, eh: 45, ey: 0, gx: 0, tilt: 0, mouth: 'curve', m: [172, 200, 190, 218, 208, 200], deco: '', bg: '#FFFFFF' };
+  function mk(o) { var r = {}, k; for (k in BASE) r[k] = BASE[k]; for (k in o) r[k] = o[k]; return r; }
+  var FACES = {
+    neutral:  mk({}),
+    escucha:  mk({ ew: 24, eh: 49, ey: -2, m: [178, 202, 190, 213, 202, 202] }),
+    feliz:    mk({ eyeL: 'up', eyeR: 'up', mouth: 'open', deco: 'feliz' }),
+    sorpresa: mk({ eh: 47, ey: -4, mouth: 'o', deco: 'sorpresa' }),
+    guino:    mk({ eyeR: 'wink', mouth: 'open', deco: 'guino' }),
+    pensando: mk({ ew: 22, eh: 43, ey: -4, gx: 6, m: [176, 216, 184, 195, 204, 203], deco: 'pensando' }),
+    dormido:  mk({ eyeL: 'down', eyeR: 'down', m: [176, 204, 190, 217, 204, 204], deco: 'dormido', bg: '#CFD9E8' }),
+    triste:   mk({ ew: 26, eh: 20, ey: 10, tilt: 14, m: [173, 215, 190, 198, 207, 215], bg: '#D6D4CB' }),
+    molesto:  mk({ ew: 27, eh: 18, ey: 8, tilt: -20, m: [174, 211, 190, 203, 206, 211], bg: '#F2A3A0' })
+  };
+  var NUM = ['ew', 'eh', 'ey', 'gx', 'tilt'];
+  var DECOS = ['feliz', 'sorpresa', 'guino', 'pensando', 'dormido'];
+  var faceG = $('face'), ovalL = $('ovalL'), ovalR = $('ovalR'), arcL = $('arcL'), arcR = $('arcR');
+  var mCurve = $('mCurve'), mOpen = $('mOpen'), mO = $('mO');
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var cur = { m: BASE.m.slice(), open: 1 }, expr = 'neutral', talking = false, mouthShown = '';
+  NUM.forEach(function (k) { cur[k] = BASE[k]; });
+  var blinkAt = performance.now() + 2500;
+
+  function arcPath(type, cx) {
+    var cy = 105;
+    if (type === 'up') return 'M' + (cx - 25) + ' ' + (cy + 22) + ' Q' + cx + ' ' + (cy - 52) + ' ' + (cx + 25) + ' ' + (cy + 22);
+    if (type === 'down') return 'M' + (cx - 25) + ' ' + (cy + 2) + ' Q' + cx + ' ' + (cy + 46) + ' ' + (cx + 25) + ' ' + (cy + 2);
+    return 'M' + (cx + 24) + ' ' + (cy - 22) + ' L' + (cx - 20) + ' ' + cy + ' L' + (cx + 24) + ' ' + (cy + 22);
+  }
+  function setFace(name) {
+    if (!FACES[name]) name = 'neutral';
+    expr = name;
+    var f = FACES[name];
+    document.documentElement.style.setProperty('--mood', f.bg);
+    ovalL.setAttribute('opacity', f.eyeL === 'oval' ? 1 : 0);
+    ovalR.setAttribute('opacity', f.eyeR === 'oval' ? 1 : 0);
+    arcL.setAttribute('opacity', f.eyeL === 'oval' ? 0 : 1);
+    arcR.setAttribute('opacity', f.eyeR === 'oval' ? 0 : 1);
+    if (f.eyeL !== 'oval') arcL.setAttribute('d', arcPath(f.eyeL, 149));
+    if (f.eyeR !== 'oval') arcR.setAttribute('d', arcPath(f.eyeR, 231));
+    DECOS.forEach(function (d) { $('deco-' + d).setAttribute('opacity', f.deco === d ? 1 : 0); });
+  }
+  function r(n) { return Math.round(n * 10) / 10; }
+  function draw(t) {
+    var f = FACES[expr], ease = still ? 1 : 0.18, i;
+    NUM.forEach(function (k) { cur[k] += (f[k] - cur[k]) * ease; });
+    for (i = 0; i < 6; i++) cur.m[i] += (f.m[i] - cur.m[i]) * ease;
+    var eh = cur.eh, ew = cur.ew, bob = 0, sx = 0;
+    if (!still) {
+      if (expr === 'escucha') { ew += 1.2 * Math.sin(t / 260); eh += 1.5 * Math.sin(t / 260); }
+      if (expr === 'pensando') bob = 2 * Math.sin(t / 500);
+      if (expr === 'dormido') bob = 2 * Math.sin(t / 900);
+      if (expr === 'molesto') sx = 1.2 * Math.sin(t / 35);
+      var d = t - blinkAt;
+      if (d > 0 && d < 160) eh = eh * Math.abs(1 - d / 80) + 1;
+      if (d >= 160) blinkAt = t + 2200 + Math.random() * 2600;
+    }
+    var cy = 105 + cur.ey, lx = 149 + cur.gx, rx = 231 + cur.gx;
+    ovalL.setAttribute('cx', r(lx)); ovalR.setAttribute('cx', r(rx));
+    ovalL.setAttribute('cy', r(cy)); ovalR.setAttribute('cy', r(cy));
+    ovalL.setAttribute('rx', r(ew)); ovalR.setAttribute('rx', r(ew));
+    ovalL.setAttribute('ry', r(Math.max(eh, 2))); ovalR.setAttribute('ry', r(Math.max(eh, 2)));
+    ovalL.setAttribute('transform', 'rotate(' + r(-cur.tilt) + ' ' + r(lx) + ' ' + r(cy) + ')');
+    ovalR.setAttribute('transform', 'rotate(' + r(cur.tilt) + ' ' + r(rx) + ' ' + r(cy) + ')');
+    faceG.setAttribute('transform', 'translate(' + r(sx) + ' ' + r(bob) + ')');
+    var m = cur.m;
+    mCurve.setAttribute('d', 'M' + r(m[0]) + ' ' + r(m[1]) + ' Q' + r(m[2]) + ' ' + r(m[3]) + ' ' + r(m[4]) + ' ' + r(m[5]));
+    var want = talking ? 'open' : f.mouth;
+    if (want !== mouthShown) {
+      mouthShown = want;
+      mCurve.setAttribute('opacity', want === 'curve' ? 1 : 0);
+      mOpen.setAttribute('opacity', want === 'open' ? 1 : 0);
+      mO.setAttribute('opacity', want === 'o' ? 1 : 0);
+    }
+    var openTarget = 1;
+    if (talking) openTarget = still ? 0.7 : 0.55 + 0.3 * Math.sin(t / 95) + 0.15 * Math.sin(t / 43);
+    else if (f.mouth !== 'open') openTarget = 0.5;
+    cur.open += (openTarget - cur.open) * (still ? 1 : 0.35);
+    var sc = Math.max(0.2, cur.open), wsc = (talking && f.mouth !== 'open') ? 0.72 : 1;
+    mOpen.setAttribute('transform', 'translate(190 194) scale(' + r(wsc) + ' ' + (Math.round(sc * wsc * 100) / 100) + ') translate(-190 -194)');
+    requestAnimationFrame(draw);
+  }
+  function setAccent(c) { if (/^#[0-9a-fA-F]{6}$/.test(c || '')) document.documentElement.style.setProperty('--accent', c); }
+  setAccent(cfg.color);
+  setFace('neutral');
+  requestAnimationFrame(draw);
+
+  // ---------- Conversación ----------
+  var statusEl = $('status'), youEl = $('you'), replyEl = $('reply'), chatEl = $('chat'), setupEl = $('setup'), armedBtn = $('armed');
+  var mode = 'idle', active = false, manual = false, asleep = false, convoUntil = 0, lastTalk = Date.now();
+  var hist = [], calmTimer = null, speakTimer = null, againTimer = null, setupOpen = false, micOk = false;
+  function setStatus(t) { statusEl.textContent = t; }
+  function hasWake(t) { return /(^|[^a-záéíóúñ])(ray|rai|rey|rei|rayo|raí)([^a-záéíóúñ]|$)/i.test(t || ''); }
+
+  function again(ms) {
+    clearTimeout(againTimer);
+    if (setupOpen || document.hidden) return;
+    if (cfg.armed || Date.now() < convoUntil) againTimer = setTimeout(startListen, ms || 300);
+    else { if (!asleep) setFace('neutral'); setStatus('Toca la carita para hablar'); }
+  }
+  function startListen() {
+    if (!N || mode !== 'idle' || !cfg.done || setupOpen || !micOk || document.hidden) return;
+    mode = 'listening';
+    active = manual || Date.now() < convoUntil;
+    if (active) { asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
+    else { setFace(asleep ? 'dormido' : 'neutral'); setStatus(asleep ? 'Dormido. Di «hola Ray» para despertarme' : 'Di «hola Ray» o toca la carita'); }
+    N.listen({ lang: cfg.lang || 'es-PE' }).catch(function () { mode = 'idle'; again(1500); });
+  }
+  function stopAll() {
+    clearTimeout(againTimer); clearTimeout(speakTimer);
+    if (N) { try { N.stopListen(); } catch (e) {} try { N.stopSpeak(); } catch (e) {} }
+    talking = false; mode = 'idle'; manual = false;
+  }
+
+  var RULES = [
+    'Te llamas Ray. Eres un asistente personal de voz con una carita minimalista. Conversas con una sola persona sobre su día a día y la ayudas con su trabajo y sus proyectos. Si te saludan con "hola Ray", responde al saludo con naturalidad. El reconocimiento de voz a veces escribe tu nombre como "rey" o "rai": entiéndelo como Ray.',
+    'Adapta tu ayuda a la profesión y los proyectos de la persona. Si aún no sabes a qué se dedica, pregúntaselo pronto. Cuando te pida ideas o no sepa qué hacer, propón ideas concretas para su caso y construye sobre lo que ya te contó.',
+    'Tus ideas tienen que servir en la vida real: algo que la persona pueda hacer esta semana en su trabajo, con clientes, plazos y recursos reales. No mezcles sus pasatiempos con su profesión salvo que lo pida de forma expresa. Si no conoces el caso concreto (qué proyecto, para quién, en qué etapa está, qué lo tiene trabado), haz primero una sola pregunta para entenderlo. Da una o dos ideas buenas con su porqué, no una lista de ocurrencias, y habla como un colega con experiencia en su rubro.',
+    'Hablas con calidez y naturalidad, como un buen amigo que escucha de verdad. Escuchas primero. Cuando te piden consejo, lo das con honestidad y de forma concreta; si algo te parece mala idea, lo dices con respeto.',
+    'Tu respuesta se leerá en voz alta: escribe como se habla, sin listas, sin símbolos, sin emojis y sin markdown. En charla normal usa de una a tres oraciones cortas; cuando te pidan ideas o ayuda con un proyecto puedes llegar a seis.',
+    'Puedes hacer una pregunta breve para entender mejor, pero no en todas las respuestas.',
+    'No puedes ver la pantalla, ni la hora, ni hacer cosas en el teléfono; si te lo piden, dilo con sencillez. Tu voz, tu color y el idioma se cambian en el botón Ajustes.',
+    'Memoria: cuando la persona te cuente algo duradero sobre sí misma (su nombre, profesión, proyectos, canales, gustos, un personaje que está creando), añade al final de tu respuesta una línea aparte con el formato [recordar: el dato en una frase corta]. Esa línea no se lee en voz alta. No guardes lo pasajero ni repitas datos que ya sabes.',
+    'Formato obligatorio: empieza con una sola etiqueta entre corchetes que indique tu emoción, elegida entre [neutral], [feliz], [guiño], [sorpresa], [triste], [molesto] y [pensando]. Usa [guiño] para bromas o complicidad, y [molesto] y [triste] solo cuando de verdad corresponda. Después de la etiqueta escribe tu respuesta.'
+  ].join('\n');
+  function systemPrompt() {
+    var who = [];
+    if (cfg.name) who.push('Se llama ' + cfg.name + '.');
+    if (cfg.country && cfg.country !== 'OT') who.push('Vive en ' + countryName(cfg.country) + '.');
+    return RULES + '\n\nIdioma: responde siempre en el idioma de la etiqueta ' + (cfg.lang || 'es-PE') + ', con las expresiones naturales de ese país, sin exagerar la jerga.' +
+      '\n\nLo que ya sabes de la persona:\n' + (who.concat(facts).join('\n') || 'Todavía nada.');
+  }
+  function parse(raw) {
+    raw = String(raw || '');
+    raw = raw.replace(/\[recordar:\s*([^\]]+)\]/gi, function (_, d) { addFact(d); return ''; });
+    var m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(raw);
+    var mood = m ? m[1].toLowerCase().replace('ñ', 'n') : 'neutral';
+    if (!FACES[mood] || mood === 'dormido' || mood === 'escucha') mood = 'neutral';
+    var text = (m ? raw.slice(m[0].length) : raw).replace(/\[[a-záéíóúñ]+\]/gi, '').replace(/[*_#`]/g, '').trim();
+    return { mood: mood, text: text };
+  }
+
+  function finishSpeak(mood) {
+    if (mode !== 'speaking') return;
+    clearTimeout(speakTimer);
+    talking = false; mode = 'idle'; lastTalk = Date.now();
+    convoUntil = Date.now() + 25000;
+    clearTimeout(calmTimer);
+    startListen();
+    if (mode !== 'listening') { setStatus('Toca la carita para hablar'); calmTimer = setTimeout(function () { if (mode === 'idle') setFace('neutral'); }, 4000); }
+  }
+  var lastMood = 'neutral';
+  function speak(text, mood) {
+    clearTimeout(againTimer);
+    mode = 'speaking'; lastMood = mood || 'neutral';
+    setFace(lastMood); talking = true; setStatus('');
+    replyEl.textContent = text;
+    clearTimeout(speakTimer);
+    speakTimer = setTimeout(function () { finishSpeak(); }, 3000 + text.length * 110);
+    if (!N) return;
+    N.speak({ text: text.slice(0, 3500), voice: cfg.voice || '', lang: cfg.lang || 'es-PE', rate: Number(cfg.rate) || 1, pitch: Number(cfg.pitch) || 1 }).catch(function () {
+      clearTimeout(speakTimer);
+      speakTimer = setTimeout(function () { finishSpeak(); }, Math.min(9000, 1200 + text.length * 50));
+    });
+  }
+  function messages() {
+    var h = hist.slice(-20);
+    while (h.length && h[0].role !== 'user') h.shift();
+    return h;
+  }
+  function ask(text) {
+    text = String(text || '').trim();
+    if (!text || mode === 'thinking') return;
+    clearTimeout(calmTimer); clearTimeout(againTimer);
+    asleep = false; manual = false; lastTalk = Date.now();
+    youEl.textContent = 'Tú: ' + text;
+    if (!cfg.key) { speak('Me falta la clave del cerebro para poder pensar. Toca Ajustes y pégala.', 'triste'); return; }
+    hist.push({ role: 'user', content: text });
+    mode = 'thinking';
+    setFace('pensando'); setStatus('Pensando…'); replyEl.textContent = '';
+    N.chat({ key: cfg.key, model: cfg.model || DEF.model, system: systemPrompt(), messages: messages(), maxTokens: 700 }).then(function (res) {
+      var p = parse(res && res.text);
+      if (!p.text) p.text = 'Me quedé en blanco. ¿Me lo repites?';
+      hist.push({ role: 'assistant', content: p.text });
+      speak(p.text, p.mood);
+    }, function (err) {
+      hist.pop();
+      var code = String((err && err.code) || ''), msg = String((err && err.message) || '');
+      var t = 'No pude responder esta vez. Inténtalo de nuevo.';
+      if (code === '401' || code === '403') t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
+      else if (code === 'red') t = 'No tengo internet ahora. Revisa tu conexión.';
+      else if (code === '404') t = 'El modelo configurado no existe. Revísalo en Ajustes.';
+      else if (code === '429' || code === '529') t = 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.';
+      else if (code === '400' && /credit|balance/i.test(msg)) t = 'La cuenta del cerebro no tiene saldo. Recárgala para seguir.';
+      speak(t, 'triste');
+    });
+  }
+
+  if (N) {
+    N.addListener('listenPartial', function (d) {
+      if (mode !== 'listening') return;
+      var t = (d && d.text) || '';
+      if (!t) return;
+      if (!active && hasWake(t)) { active = true; asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
+      if (active) youEl.textContent = 'Tú: ' + t;
+    });
+    N.addListener('listenFinal', function (d) {
+      if (mode !== 'listening') return;
+      mode = 'idle';
+      var t = String((d && d.text) || '').trim();
+      if (t && (active || hasWake(t))) ask(t);
+      else { manual = false; again(250); }
+    });
+    N.addListener('listenError', function (d) {
+      if (mode !== 'listening') return;
+      mode = 'idle'; manual = false;
+      var c = d && d.code;
+      if (c === 9) { micOk = false; setFace('triste'); setStatus('Necesito permiso para usar el micrófono'); return; }
+      again(c === 8 ? 1200 : (c === 2 || c === 1 || c === 4) ? 2500 : 350);
+    });
+    N.addListener('speakEnd', function () { finishSpeak(); });
+  }
+
+  $('faceWrap').addEventListener('click', function () {
+    if (setupOpen || !cfg.done || !N) return;
+    lastTalk = Date.now();
+    if (mode === 'thinking') return;
+    if (mode === 'speaking') { clearTimeout(speakTimer); try { N.stopSpeak(); } catch (e) {} talking = false; mode = 'idle'; }
+    if (!micOk) { N.askMic().then(function (r2) { micOk = !!(r2 && r2.granted); if (micOk) { manual = true; startListen(); } }); return; }
+    asleep = false;
+    if (mode === 'listening') { active = true; manual = true; setFace('escucha'); setStatus('Te escucho…'); return; }
+    manual = true;
+    startListen();
+  });
+  function paintArmed() { armedBtn.setAttribute('aria-pressed', cfg.armed ? 'true' : 'false'); armedBtn.textContent = cfg.armed ? 'Siempre escuchando' : 'Solo al tocar'; }
+  armedBtn.addEventListener('click', function () {
+    cfg.armed = !cfg.armed; save(); paintArmed();
+    if (cfg.armed) { if (mode === 'idle') startListen(); }
+    else if (mode === 'listening' && !active) { try { N.stopListen(); } catch (e) {} mode = 'idle'; setFace('neutral'); setStatus('Toca la carita para hablar'); }
+  });
+  paintArmed();
+  setInterval(function () {
+    if (cfg.done && !setupOpen && !asleep && mode === 'listening' && !active && Date.now() - lastTalk > 180000) { asleep = true; setFace('dormido'); setStatus('Dormido. Di «hola Ray» para despertarme'); }
+  }, 5000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stopAll();
+    else if (cfg.done && !setupOpen) { mode = 'idle'; startListen(); }
+  });
+
+  // ---------- Configuración inicial y ajustes ----------
+  var voicesAll = [], step = 0, draft = null;
+  function loadVoices(cb, tries) {
+    if (!N) { cb(); return; }
+    N.voices().then(function (res) {
+      if (res && res.ready && res.voices && res.voices.length) { voicesAll = res.voices; cb(); }
+      else if ((tries || 0) < 12) setTimeout(function () { loadVoices(cb, (tries || 0) + 1); }, 500);
+      else cb();
+    }, function () { cb(); });
+  }
+  function voicesFor(lang, country) {
+    var l = langOf(lang), pref = [String(lang).toLowerCase()];
+    var cl = countryLocale(country);
+    if (cl && langOf(cl) === l) pref.push(cl.toLowerCase());
+    if (l === 'es' && country !== 'ES') pref.push('es-us', 'es-mx', 'es-419');
+    if (l === 'es' && country === 'ES') pref.push('es-es');
+    var list = voicesAll.filter(function (v) { return langOf(v.locale) === l; });
+    function rank(v) { var i = pref.indexOf(String(v.locale).toLowerCase()); return i < 0 ? 99 : i; }
+    list.sort(function (a, b) { return rank(a) - rank(b) || (a.network ? 1 : 0) - (b.network ? 1 : 0) || String(a.name).localeCompare(String(b.name)); });
+    var best = list.length ? rank(list[0]) : 99;
+    return list.map(function (v, i) { return { name: v.name, locale: v.locale, label: v.label, network: v.network, rec: rank(v) === best && best < 99, n: i + 1 }; });
+  }
+  function langOptions() {
+    var seen = {}, out = [];
+    function add(tag) { if (!tag || seen[tag.toLowerCase()]) return; seen[tag.toLowerCase()] = 1; out.push([tag, langLabel(tag)]); }
+    add(countryLocale(draft.country)); add(draft.lang);
+    voicesAll.forEach(function (v) { add(v.locale); });
+    var first = out.slice(0, 1), rest = out.slice(1).sort(function (a, b) { return a[1].localeCompare(b[1]); });
+    return first.concat(rest);
+  }
+  function hsl2hex(h) {
+    var s = 0.85, l = 0.55, a = s * Math.min(l, 1 - l);
+    function f(n) { var k = (n + h / 30) % 12, c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1); return ('0' + Math.round(255 * c).toString(16)).slice(-2); }
+    return '#' + f(0) + f(8) + f(4);
+  }
+  function sample(v) {
+    if (!N) return;
+    var t = SAMPLE[langOf(draft.lang)] || SAMPLE.en;
+    setFace('feliz'); talking = true;
+    clearTimeout(speakTimer);
+    speakTimer = setTimeout(function () { talking = false; setFace('neutral'); }, 4500);
+    N.speak({ text: t, voice: v || '', lang: draft.lang, rate: Number(draft.rate) || 1, pitch: Number(draft.pitch) || 1 }).catch(function () {});
+  }
+  var STEPS = 5;
+  function renderStep() {
+    var h = '', nav = '<div class="row" style="margin-top:4px;">' + (step > 0 ? '<button class="btn" id="sBack" type="button">Atrás</button>' : (cfg.done ? '<button class="btn" id="sClose" type="button">Cerrar</button>' : '')) +
+      '<button class="btn main" id="sNext" type="button">' + (step === STEPS - 1 ? 'Listo' : 'Siguiente') + '</button></div>';
+    if (step === 0) {
+      h = '<h2>Hola, soy Ray</h2><p>Vamos a conocernos. Esto queda guardado solo en este equipo.</p>' +
+        '<label class="f" for="sName">¿Cómo te llamas?<input type="text" id="sName" autocomplete="given-name" value="' + esc(draft.name) + '"></label>' +
+        '<label class="f" for="sMail">Tu correo<input type="email" id="sMail" inputmode="email" autocomplete="email" placeholder="tucorreo@gmail.com" value="' + esc(draft.email) + '"></label><p class="err" id="sErr"></p>';
+    } else if (step === 1) {
+      h = '<h2>¿De dónde eres?</h2><p>Con tu país te recomiendo el idioma y la voz más cercanos. Puedes elegir cualquier otro.</p>' +
+        '<label class="f" for="sCountry">País<select id="sCountry">' + COUNTRIES.map(function (c) { return '<option value="' + c[0] + '"' + (c[0] === draft.country ? ' selected' : '') + '>' + esc(c[1]) + '</option>'; }).join('') + '</select></label>' +
+        '<label class="f" for="sLang">Idioma en que hablamos<select id="sLang">' + langOptions().map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0].toLowerCase() === String(draft.lang).toLowerCase() ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select></label>';
+    } else if (step === 2) {
+      var vs = voicesFor(draft.lang, draft.country);
+      h = '<h2>Elige mi voz</h2><p>Toca una voz para escucharla. Con el tono la haces más grave o más aguda.</p><div class="voices">' +
+        (vs.length ? vs.map(function (v) { return '<button type="button" class="voice" data-v="' + esc(v.name) + '" aria-pressed="' + (v.name === draft.voice ? 'true' : 'false') + '"><span>Voz ' + v.n + ' <small>' + esc(v.label || v.locale) + (v.network ? ' · necesita internet' : '') + '</small></span>' + (v.rec ? '<span class="tag">Recomendada</span>' : '') + '</button>'; }).join('')
+          : '<p>Este equipo no tiene voces instaladas para ese idioma. Usaré la voz por defecto del sistema; puedes instalar más en los ajustes de Android, en «Salida de texto a voz».</p>') + '</div>' +
+        '<label class="f" for="sPitch">Tono: más grave ↔ más aguda<input type="range" id="sPitch" min="0.6" max="1.5" step="0.05" value="' + esc(draft.pitch) + '"></label>' +
+        '<label class="f" for="sRate">Velocidad: más lenta ↔ más rápida<input type="range" id="sRate" min="0.7" max="1.4" step="0.05" value="' + esc(draft.rate) + '"></label>' +
+        '<button class="btn" id="sTry" type="button">Escuchar ejemplo</button>';
+    } else if (step === 3) {
+      h = '<h2>Elige mi color</h2><p>Es el color de mi lengua, mis destellos y mis gestos. Toca uno y mira el ejemplo arriba.</p><div class="sws">' +
+        COLORS.map(function (c) { return '<button type="button" class="sw" data-c="' + c + '" style="background:' + c + '" aria-label="Color" aria-pressed="' + (c.toLowerCase() === String(draft.color).toLowerCase() ? 'true' : 'false') + '"></button>'; }).join('') + '</div>' +
+        '<label class="f" for="sHue">Otro color<input type="range" id="sHue" min="0" max="359" step="1" value="20"></label>' +
+        '<div class="row"><button class="btn" data-face="feliz" type="button">Alegre</button><button class="btn" data-face="sorpresa" type="button">Sorpresa</button><button class="btn" data-face="guino" type="button">Guiño</button></div>';
+    } else {
+      h = '<h2>Mi cerebro</h2><p>Para pensar necesito una clave de API de Claude. Se crea en la Consola de Claude, en la web de Anthropic, y se paga por uso. Pégala aquí una sola vez; queda guardada solo en este equipo.</p>' +
+        '<label class="f" for="sKey">Clave de API<input type="password" id="sKey" autocomplete="off" placeholder="sk-ant-…" value="' + esc(draft.key) + '"></label>' +
+        '<label class="f" for="sModel">Modelo<input type="text" id="sModel" autocomplete="off" value="' + esc(draft.model) + '"></label>' +
+        '<p>Si aún no la tienes, toca Listo y la pegas después en Ajustes.</p><p class="ver">Ray ' + esc(VERSION) + '</p>';
+    }
+    setupEl.innerHTML = h + nav;
+    setupEl.scrollTop = 0;
+    if ($('sBack')) $('sBack').onclick = function () { keep(); step--; renderStep(); };
+    if ($('sClose')) $('sClose').onclick = function () { closeSetup(false); };
+    $('sNext').onclick = function () {
+      if (!keep(true)) return;
+      if (step < STEPS - 1) { step++; if (step === 2 && !draft.voice) { var v0 = voicesFor(draft.lang, draft.country)[0]; if (v0) draft.voice = v0.name; } renderStep(); }
+      else closeSetup(true);
+    };
+    if (step === 1) {
+      $('sCountry').onchange = function () { draft.country = this.value; var cl = countryLocale(draft.country); if (cl) { draft.lang = cl; draft.voice = ''; } renderStep(); };
+      $('sLang').onchange = function () { draft.lang = this.value; draft.voice = ''; };
+    }
+    if (step === 2) {
+      Array.prototype.forEach.call(setupEl.querySelectorAll('.voice'), function (b) {
+        b.onclick = function () {
+          keep(); draft.voice = b.getAttribute('data-v');
+          Array.prototype.forEach.call(setupEl.querySelectorAll('.voice'), function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+          sample(draft.voice);
+        };
+      });
+      $('sTry').onclick = function () { keep(); sample(draft.voice); };
+    }
+    if (step === 3) {
+      Array.prototype.forEach.call(setupEl.querySelectorAll('.sw'), function (b) {
+        b.onclick = function () {
+          draft.color = b.getAttribute('data-c'); setAccent(draft.color); setFace('feliz');
+          Array.prototype.forEach.call(setupEl.querySelectorAll('.sw'), function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+        };
+      });
+      $('sHue').oninput = function () {
+        draft.color = hsl2hex(Number(this.value)); setAccent(draft.color); setFace('feliz');
+        Array.prototype.forEach.call(setupEl.querySelectorAll('.sw'), function (x) { x.setAttribute('aria-pressed', 'false'); });
+      };
+      Array.prototype.forEach.call(setupEl.querySelectorAll('[data-face]'), function (b) { b.onclick = function () { setFace(b.getAttribute('data-face')); }; });
+      setFace('feliz');
+    } else if (step !== 2) setFace('neutral');
+  }
+  function keep(validate) {
+    if (step === 0) {
+      draft.name = $('sName').value.trim(); draft.email = $('sMail').value.trim().toLowerCase();
+      if (validate) {
+        if (!draft.name) { $('sErr').textContent = 'Dime tu nombre para saber cómo llamarte.'; return false; }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email)) { $('sErr').textContent = 'Revisa que el correo esté bien escrito.'; return false; }
+      }
+    } else if (step === 1) { draft.country = $('sCountry').value; draft.lang = $('sLang').value || draft.lang; }
+    else if (step === 2) { draft.pitch = Number($('sPitch').value) || 1; draft.rate = Number($('sRate').value) || 1; }
+    else if (step === 4) { draft.key = $('sKey').value.trim(); draft.model = $('sModel').value.trim() || DEF.model; }
+    return true;
+  }
+  function openSetup() {
+    stopAll();
+    setupOpen = true; step = 0; draft = {};
+    for (var k in cfg) draft[k] = cfg[k];
+    chatEl.hidden = true; setupEl.hidden = false;
+    setFace('neutral');
+    renderStep();
+    loadVoices(function () { if (setupOpen && (step === 1 || step === 2)) { keep(); renderStep(); } });
+  }
+  function closeSetup(apply) {
+    var first = !cfg.done;
+    if (apply) { for (var k in draft) cfg[k] = draft[k]; cfg.done = true; save(); }
+    setAccent(cfg.color);
+    clearTimeout(speakTimer); talking = false;
+    if (N) { try { N.stopSpeak(); } catch (e) {} }
+    setupOpen = false; setupEl.hidden = true; chatEl.hidden = false;
+    setFace('neutral'); paintArmed();
+    if (!cfg.done) { openSetup(); return; }
+    begin(first && apply);
+  }
+  function begin(greet) {
+    if (!N) { replyEl.textContent = 'Ray funciona dentro de la app de Android.'; setStatus(''); return; }
+    N.askMic().then(function (r2) {
+      micOk = !!(r2 && r2.granted);
+      mode = 'idle';
+      if (greet) speak('Hola ' + cfg.name + ', soy Ray. Cuando quieras hablar conmigo, dime hola Ray.', 'feliz');
+      else if (micOk) { replyEl.textContent = replyEl.textContent || ('Hola ' + cfg.name + '. Aquí estoy.'); startListen(); }
+      if (!micOk) setStatus('Necesito permiso para usar el micrófono. Toca la carita.');
+    }, function () { setStatus('No pude pedir el micrófono. Toca la carita.'); });
+  }
+  $('gear').addEventListener('click', openSetup);
+
+  if (!cfg.done) openSetup();
+  else loadVoices(function () { begin(false); });
+})();
+</script>
+</body>
+</html>

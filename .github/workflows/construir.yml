@@ -1,0 +1,69 @@
+# Ray — APK de Android.
+# Cada cambio en "main" (carpetas web/ o movil/) arma el APK y lo publica en Releases como Ray.apk.
+# También se puede lanzar a mano desde Actions → "Construir Ray" → Run workflow.
+name: Construir Ray
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'movil/**', '.github/workflows/construir.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Preparar la app
+        working-directory: movil
+        run: |
+          npm install
+          rm -rf www android && mkdir www && cp -r ../web/* www/
+          V=$(node -p "require('./package.json').version")
+          sed -i "s/__RAY_VERSION__/$V/g" www/index.html
+          npx cap add android
+          cp native/*.java android/app/src/main/java/com/raiki/ray/
+          cp -r res/* android/app/src/main/res/
+          MF=android/app/src/main/AndroidManifest.xml
+          grep -q RECORD_AUDIO $MF || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <queries>\n        <intent><action android:name="android.speech.RecognitionService" /></intent>\n        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>\n    </queries>\n</manifest>#' $MF
+          cat $MF
+          # Icono: los dos ojos de Ray sobre blanco
+          sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || true
+          convert -size 432x432 xc:none -fill '#232121' -draw "ellipse 178,216 22,43 0,360" -draw "ellipse 254,216 22,43 0,360" fg.png || true
+          convert -size 432x432 xc:white -fill '#232121' -draw "ellipse 160,216 34,66 0,360" -draw "ellipse 272,216 34,66 0,360" full.png || true
+          if [ -f fg.png ] && [ -f full.png ]; then
+            for d in mdpi:48:108 hdpi:72:162 xhdpi:96:216 xxhdpi:144:324 xxxhdpi:192:432; do
+              N=${d%%:*}; R=${d#*:}; L=${R%%:*}; F=${R##*:}; DIR=android/app/src/main/res/mipmap-$N
+              [ -d "$DIR" ] || continue
+              convert fg.png -resize ${F}x${F} $DIR/ic_launcher_foreground.png || true
+              convert full.png -resize ${L}x${L} $DIR/ic_launcher.png || true
+              convert full.png -resize ${L}x${L} $DIR/ic_launcher_round.png || true
+            done
+          fi
+          CODE=$(node -p "const [a,b,c]=require('./package.json').version.split('.').map(Number);a*10000+b*100+c")
+          sed -i "s/versionCode [0-9]*/versionCode $CODE/; s/versionName \"[^\"]*\"/versionName \"$V\"/" android/app/build.gradle
+          npx cap sync android
+      - name: Compilar
+        working-directory: movil/android
+        run: ./gradlew assembleRelease --no-daemon -q
+      - name: Firmar y publicar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BT=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)
+          $BT/zipalign -p -f 4 movil/android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          $BT/apksigner sign --ks movil/ray.jks --ks-key-alias ray --ks-pass pass:ray-raiki-2026 --key-pass pass:ray-raiki-2026 --out Ray.apk aligned.apk
+          $BT/apksigner verify Ray.apk && ls -la Ray.apk
+          V=$(node -p "require('./movil/package.json').version")
+          gh release view "v$V" >/dev/null 2>&1 || gh release create "v$V" --target "${{ github.sha }}" --title "Ray $V" --notes "Ray $V — asistente de voz con carita. Descarga Ray.apk e instálalo en tu celular o tableta Android."
+          gh release upload "v$V" Ray.apk --clobber

@@ -1,0 +1,7 @@
+{
+  "appId": "com.raiki.ray",
+  "appName": "Ray",
+  "webDir": "www",
+  "server": { "androidScheme": "https" },
+  "android": { "backgroundColor": "#ffffff" }
+}
