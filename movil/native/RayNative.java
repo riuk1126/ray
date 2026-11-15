@@ -213,29 +213,54 @@ public class RayNative extends Plugin {
   }
 
   // ---------- Cerebro ----------
+  // provider "gemini" (Google, con nivel gratuito) o "claude" (Anthropic, de pago por uso)
   @PluginMethod
   public void chat(final PluginCall call) {
+    final String provider = call.getString("provider", "gemini");
     final String key = call.getString("key", "");
-    final String model = call.getString("model", "claude-sonnet-5-5");
+    final String model = call.getString("model", "");
     final String system = call.getString("system", "");
     final JSArray messages = call.getArray("messages", new JSArray());
     final Integer maxTokens = call.getInt("maxTokens", 700);
     new Thread(() -> {
       HttpURLConnection c = null;
       try {
+        final boolean gemini = !"claude".equals(provider);
+        JSONArray ms = new JSONArray(messages.toString());
         JSONObject body = new JSONObject();
-        body.put("model", model);
-        body.put("max_tokens", maxTokens == null ? 700 : maxTokens);
-        body.put("system", system);
-        body.put("messages", new JSONArray(messages.toString()));
-        c = (HttpURLConnection) new URL("https://api.anthropic.com/v1/messages").openConnection();
+        String url;
+        if (gemini) {
+          JSONArray contents = new JSONArray();
+          for (int k = 0; k < ms.length(); k++) {
+            JSONObject m = ms.getJSONObject(k);
+            JSONObject o = new JSONObject();
+            o.put("role", "assistant".equals(m.optString("role")) ? "model" : "user");
+            o.put("parts", new JSONArray().put(new JSONObject().put("text", m.optString("content", ""))));
+            contents.put(o);
+          }
+          body.put("system_instruction", new JSONObject().put("parts", new JSONArray().put(new JSONObject().put("text", system))));
+          body.put("contents", contents);
+          body.put("generationConfig", new JSONObject().put("maxOutputTokens", 4096));
+          url = "https://generativelanguage.googleapis.com/v1beta/models/" + (model == null || model.isEmpty() ? "gemini-flash-latest" : model) + ":generateContent";
+        } else {
+          body.put("model", model == null || model.isEmpty() ? "claude-sonnet-5-5" : model);
+          body.put("max_tokens", maxTokens == null ? 700 : maxTokens);
+          body.put("system", system);
+          body.put("messages", ms);
+          url = "https://api.anthropic.com/v1/messages";
+        }
+        c = (HttpURLConnection) new URL(url).openConnection();
         c.setRequestMethod("POST");
         c.setConnectTimeout(20000);
         c.setReadTimeout(90000);
         c.setDoOutput(true);
         c.setRequestProperty("content-type", "application/json");
-        c.setRequestProperty("x-api-key", key);
-        c.setRequestProperty("anthropic-version", "2023-06-01");
+        if (gemini) {
+          c.setRequestProperty("x-goog-api-key", key);
+        } else {
+          c.setRequestProperty("x-api-key", key);
+          c.setRequestProperty("anthropic-version", "2023-06-01");
+        }
         OutputStream out = c.getOutputStream();
         out.write(body.toString().getBytes("UTF-8"));
         out.close();
@@ -255,12 +280,25 @@ public class RayNative extends Plugin {
           call.reject(msg.isEmpty() ? ("HTTP " + code) : msg, String.valueOf(code));
           return;
         }
-        JSONArray content = new JSONObject(raw).optJSONArray("content");
         StringBuilder sb = new StringBuilder();
-        if (content != null) {
-          for (int k = 0; k < content.length(); k++) {
-            JSONObject b = content.optJSONObject(k);
-            if (b != null && "text".equals(b.optString("type"))) sb.append(b.optString("text", ""));
+        JSONObject res = new JSONObject(raw);
+        if (gemini) {
+          JSONArray cands = res.optJSONArray("candidates");
+          JSONObject content = (cands == null || cands.length() == 0) ? null : cands.optJSONObject(0).optJSONObject("content");
+          JSONArray parts = content == null ? null : content.optJSONArray("parts");
+          if (parts != null) {
+            for (int k = 0; k < parts.length(); k++) {
+              JSONObject b = parts.optJSONObject(k);
+              if (b != null && !b.optBoolean("thought", false)) sb.append(b.optString("text", ""));
+            }
+          }
+        } else {
+          JSONArray content = res.optJSONArray("content");
+          if (content != null) {
+            for (int k = 0; k < content.length(); k++) {
+              JSONObject b = content.optJSONObject(k);
+              if (b != null && "text".equals(b.optString("type"))) sb.append(b.optString("text", ""));
+            }
           }
         }
         JSObject r = new JSObject();

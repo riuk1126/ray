@@ -114,12 +114,13 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   // ---------- Ajustes guardados en el equipo ----------
-  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', model: 'claude-sonnet-5-5', armed: true, rate: 1, pitch: 1 };
+  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'gemini', model: 'gemini-flash-latest', armed: true, rate: 1, pitch: 1 };
   var cfg = {}, facts = [];
   (function () {
     var k, s = null;
     try { s = JSON.parse(localStorage.getItem('ray_cfg') || 'null'); } catch (e) {}
     for (k in DEF) cfg[k] = (s && s[k] !== undefined) ? s[k] : DEF[k];
+    if (s && s.provider === undefined) { if (s.key) cfg.provider = 'claude'; else cfg.model = DEF.model; }
     try { var f = JSON.parse(localStorage.getItem('ray_facts') || '[]'); if (Array.isArray(f)) facts = f; } catch (e) {}
   })();
   function save() { try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {} }
@@ -141,6 +142,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     ['PT', 'Portugal', 'pt-PT'], ['GB', 'Reino Unido', 'en-GB'], ['RU', 'Rusia', 'ru-RU'], ['OT', 'Otro país', '']
   ];
   var COLORS = ['#FF7A45', '#FFC233', '#3DBE7B', '#18B8A6', '#38A9F0', '#3D6BF0', '#FF5FA2', '#E5484D', '#8A5A3C', '#7A8794', '#F2A900', '#00A86B'];
+  var MODELS = { gemini: 'gemini-flash-latest', claude: 'claude-sonnet-5-5' };
   var SAMPLE = { es: 'Hola, soy Ray. Así sueno con esta voz.', en: 'Hi, I am Ray. This is how I sound with this voice.', pt: 'Olá, eu sou o Ray. É assim que eu falo com esta voz.', fr: 'Bonjour, je suis Ray. Voici ma voix.', it: 'Ciao, sono Ray. Questa è la mia voce.', de: 'Hallo, ich bin Ray. So klinge ich mit dieser Stimme.' };
   function countryName(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][1]; return ''; }
   function countryLocale(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][2]; return ''; }
@@ -330,7 +332,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     hist.push({ role: 'user', content: text });
     mode = 'thinking';
     setFace('pensando'); setStatus('Pensando…'); replyEl.textContent = '';
-    N.chat({ key: cfg.key, model: cfg.model || DEF.model, system: systemPrompt(), messages: messages(), maxTokens: 700 }).then(function (res) {
+    N.chat({ provider: cfg.provider || 'gemini', key: cfg.key, model: cfg.model || MODELS[cfg.provider || 'gemini'], system: systemPrompt(), messages: messages(), maxTokens: 700 }).then(function (res) {
       var p = parse(res && res.text);
       if (!p.text) p.text = 'Me quedé en blanco. ¿Me lo repites?';
       hist.push({ role: 'assistant', content: p.text });
@@ -339,10 +341,11 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       hist.pop();
       var code = String((err && err.code) || ''), msg = String((err && err.message) || '');
       var t = 'No pude responder esta vez. Inténtalo de nuevo.';
-      if (code === '401' || code === '403') t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
+      if (code === '401' || code === '403' || (code === '400' && /api key/i.test(msg))) t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
       else if (code === 'red') t = 'No tengo internet ahora. Revisa tu conexión.';
       else if (code === '404') t = 'El modelo configurado no existe. Revísalo en Ajustes.';
-      else if (code === '429' || code === '529') t = 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.';
+      else if (code === '429') t = cfg.provider === 'claude' ? 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.' : 'Llegamos al límite gratuito por ahora. Espera un rato y seguimos.';
+      else if (code === '529' || code === '503') t = 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.';
       else if (code === '400' && /credit|balance/i.test(msg)) t = 'La cuenta del cerebro no tiene saldo. Recárgala para seguir.';
       speak(t, 'triste');
     });
@@ -468,8 +471,9 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
         '<label class="f" for="sHue">Otro color<input type="range" id="sHue" min="0" max="359" step="1" value="20"></label>' +
         '<div class="row"><button class="btn" data-face="feliz" type="button">Alegre</button><button class="btn" data-face="sorpresa" type="button">Sorpresa</button><button class="btn" data-face="guino" type="button">Guiño</button></div>';
     } else {
-      h = '<h2>Mi cerebro</h2><p>Para pensar necesito una clave de API de Claude. Se crea en la Consola de Claude, en la web de Anthropic, y se paga por uso. Pégala aquí una sola vez; queda guardada solo en este equipo.</p>' +
-        '<label class="f" for="sKey">Clave de API<input type="password" id="sKey" autocomplete="off" placeholder="sk-ant-…" value="' + esc(draft.key) + '"></label>' +
+      h = '<h2>Mi cerebro</h2><p>Para pensar necesito una clave. Con Gemini es gratis: se saca con tu cuenta de Google en Google AI Studio (aistudio.google.com), botón «Get API key». Pégala aquí una sola vez; queda guardada solo en este equipo.</p>' +
+        '<label class="f" for="sProv">Cerebro<select id="sProv"><option value="gemini"' + (draft.provider !== 'claude' ? ' selected' : '') + '>Gemini de Google (gratis, con límite diario)</option><option value="claude"' + (draft.provider === 'claude' ? ' selected' : '') + '>Claude de Anthropic (de pago por uso)</option></select></label>' +
+        '<label class="f" for="sKey">Clave<input type="password" id="sKey" autocomplete="off" placeholder="Pega tu clave aquí" value="' + esc(draft.key) + '"></label>' +
         '<label class="f" for="sModel">Modelo<input type="text" id="sModel" autocomplete="off" value="' + esc(draft.model) + '"></label>' +
         '<p>Si aún no la tienes, toca Listo y la pegas después en Ajustes.</p><p class="ver">Ray ' + esc(VERSION) + '</p>';
     }
@@ -482,6 +486,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (step < STEPS - 1) { step++; if (step === 2 && !draft.voice) { var v0 = voicesFor(draft.lang, draft.country)[0]; if (v0) draft.voice = v0.name; } renderStep(); }
       else closeSetup(true);
     };
+    if (step === 4) { $('sProv').onchange = function () { if (this.value !== draft.provider) { draft.provider = this.value; draft.key = ''; $('sKey').value = ''; draft.model = MODELS[draft.provider]; $('sModel').value = draft.model; } }; }
     if (step === 1) {
       $('sCountry').onchange = function () { draft.country = this.value; var cl = countryLocale(draft.country); if (cl) { draft.lang = cl; draft.voice = ''; } renderStep(); };
       $('sLang').onchange = function () { draft.lang = this.value; draft.voice = ''; };
@@ -520,7 +525,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       }
     } else if (step === 1) { draft.country = $('sCountry').value; draft.lang = $('sLang').value || draft.lang; }
     else if (step === 2) { draft.pitch = Number($('sPitch').value) || 1; draft.rate = Number($('sRate').value) || 1; }
-    else if (step === 4) { draft.key = $('sKey').value.trim(); draft.model = $('sModel').value.trim() || DEF.model; }
+    else if (step === 4) { draft.provider = $('sProv').value; draft.key = $('sKey').value.trim(); draft.model = $('sModel').value.trim() || MODELS[draft.provider]; }
     return true;
   }
   function openSetup() {

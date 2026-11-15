@@ -1,7 +1,7 @@
 {
   "name": "ray-movil",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "dependencies": {
     "@capacitor/android": "6.1.2",
     "@capacitor/cli": "6.1.2",
