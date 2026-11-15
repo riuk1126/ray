@@ -1,12 +1,13 @@
 # Ray — APK de Android.
-# Cada cambio en "main" (carpetas web/ o movil/) arma el APK y lo publica en Releases como Ray.apk.
+# La parte web (web/app.html) la carga la app directo desde GitHub al abrirse: cada cambio en "main" le llega sola al celular.
+# El APK solo se rearma cuando cambia la carpeta movil/ y se publica en Releases como Ray.apk; la app lo ofrece con el botón «Actualizar».
 # También se puede lanzar a mano desde Actions → "Construir Ray" → Run workflow.
 name: Construir Ray
 
 on:
   push:
     branches: [main]
-    paths: ['web/**', 'movil/**', '.github/workflows/construir.yml']
+    paths: ['movil/**', '.github/workflows/construir.yml']
   workflow_dispatch:
 
 permissions:
@@ -30,13 +31,12 @@ jobs:
           npm install
           rm -rf www android && mkdir www && cp -r ../web/* www/
           V=$(node -p "require('./package.json').version")
-          sed -i "s/__RAY_VERSION__/$V/g" www/index.html
           npx cap add android
           cp native/*.java android/app/src/main/java/com/raiki/ray/
           cp -r res/* android/app/src/main/res/
           MF=android/app/src/main/AndroidManifest.xml
           grep -q RECORD_AUDIO $MF || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <queries>\n        <intent><action android:name="android.speech.RecognitionService" /></intent>\n        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>\n    </queries>\n</manifest>#' $MF
-          cat $MF
+          grep -q REQUEST_INSTALL_PACKAGES $MF || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n</manifest>#' $MF
           # Icono: los dos ojos de Ray sobre blanco
           sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || true
           convert -size 432x432 xc:none -fill '#232121' -draw "ellipse 178,216 22,43 0,360" -draw "ellipse 254,216 22,43 0,360" fg.png || true
