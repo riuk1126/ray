@@ -244,9 +244,13 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   // ---------- Conversación ----------
   var statusEl = $('status'), youEl = $('you'), replyEl = $('reply'), chatEl = $('chat'), setupEl = $('setup'), armedBtn = $('armed');
   var mode = 'idle', active = false, manual = false, asleep = false, convoUntil = 0, lastTalk = Date.now();
+  var errCount = 0, spoke = false, startTimer = null;
   var hist = [], calmTimer = null, speakTimer = null, againTimer = null, setupOpen = false, micOk = false;
   function setStatus(t) { statusEl.textContent = t; }
-  function hasWake(t) { return /(^|[^a-záéíóúñ])(ray|rai|rey|rei|rayo|raí)([^a-záéíóúñ]|$)/i.test(t || ''); }
+  function hasWake(t) {
+    t = String(t || '');
+    return /(^|[^a-záéíóúñ])(ray|rai|rey|rei|rayo|raí|rae|raid|rail|rain|wray|grey|trey|reyes|rayos|reí)([^a-záéíóúñ]|$)/i.test(t) || /^\s*(hola|oye|hey|ey|buenas|buenos días|buenas tardes|buenas noches)([^a-záéíóúñ]|$)/i.test(t);
+  }
 
   function again(ms) {
     clearTimeout(againTimer);
@@ -260,7 +264,11 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     active = manual || Date.now() < convoUntil;
     if (active) { asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
     else { setFace(asleep ? 'dormido' : 'neutral'); setStatus(asleep ? 'Dormido. Di «hola Ray» para despertarme' : 'Di «hola Ray» o toca la carita'); }
-    N.listen({ lang: cfg.lang || 'es-PE' }).catch(function () { mode = 'idle'; again(1500); });
+    N.listen({ lang: cfg.lang || 'es-PE' }).catch(function (e) {
+      mode = 'idle';
+      if (/no_recognizer/.test(String(e && e.message))) { setFace('triste'); setStatus('Este equipo no tiene activo el reconocimiento de voz de Google. Instala o activa la app de Google.'); return; }
+      again(1500);
+    });
   }
   function stopAll() {
     clearTimeout(againTimer); clearTimeout(speakTimer);
@@ -298,7 +306,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
 
   function finishSpeak(mood) {
     if (mode !== 'speaking') return;
-    clearTimeout(speakTimer);
+    clearTimeout(speakTimer); clearTimeout(startTimer);
     talking = false; mode = 'idle'; lastTalk = Date.now();
     convoUntil = Date.now() + 25000;
     clearTimeout(calmTimer);
@@ -314,10 +322,16 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     clearTimeout(speakTimer);
     speakTimer = setTimeout(function () { finishSpeak(); }, 3000 + text.length * 110);
     if (!N) return;
-    N.speak({ text: text.slice(0, 3500), voice: cfg.voice || '', lang: cfg.lang || 'es-PE', rate: Number(cfg.rate) || 1, pitch: Number(cfg.pitch) || 1 }).catch(function () {
-      clearTimeout(speakTimer);
-      speakTimer = setTimeout(function () { finishSpeak(); }, Math.min(9000, 1200 + text.length * 50));
-    });
+    spoke = false;
+    var payload = { text: text.slice(0, 3500), voice: cfg.voice || '', lang: cfg.lang || 'es-PE', rate: Number(cfg.rate) || 1, pitch: Number(cfg.pitch) || 1 };
+    function plain(why) {
+      if (mode !== 'speaking' || spoke) return;
+      setStatus(why);
+      N.speak({ text: payload.text, voice: '', lang: payload.lang, rate: 1, pitch: 1 }).catch(function () { setStatus('No puedo hablar: este equipo no tiene voz instalada. Instala «Servicios de voz de Google».'); });
+    }
+    clearTimeout(startTimer);
+    startTimer = setTimeout(function () { plain('Mi voz elegida no sonó; uso la del sistema. Sube el volumen multimedia o cambia la voz en Ajustes.'); }, 3000);
+    N.speak(payload).catch(function () { clearTimeout(startTimer); plain('Mi voz elegida falló; uso la del sistema.'); });
   }
   function messages() {
     var h = hist.slice(-20);
@@ -350,6 +364,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       else if (code === '529' || code === '503') t = 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.';
       else if (code === '400' && /credit|balance/i.test(msg)) t = 'La cuenta del cerebro no tiene saldo. Recárgala para seguir.';
       speak(t, 'triste');
+      setTimeout(function () { setStatus('Detalle: ' + (code || 'sin código') + ' ' + msg.slice(0, 120)); }, 50);
     });
   }
 
@@ -359,22 +374,25 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       var t = (d && d.text) || '';
       if (!t) return;
       if (!active && hasWake(t)) { active = true; asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
-      if (active) youEl.textContent = 'Tú: ' + t;
+      youEl.textContent = (active ? 'Tú: ' : 'Oí: ') + t;
     });
     N.addListener('listenFinal', function (d) {
       if (mode !== 'listening') return;
       mode = 'idle';
       var t = String((d && d.text) || '').trim();
+      errCount = 0;
       if (t && (active || hasWake(t))) ask(t);
-      else { manual = false; again(250); }
+      else { if (t) youEl.textContent = 'Oí: ' + t + ' (di «hola Ray» para que te responda)'; manual = false; again(250); }
     });
     N.addListener('listenError', function (d) {
       if (mode !== 'listening') return;
       mode = 'idle'; manual = false;
       var c = d && d.code;
-      if (c === 9) { micOk = false; setFace('triste'); setStatus('Necesito permiso para usar el micrófono'); return; }
+      if (c === 9) { micOk = false; setFace('triste'); setStatus('Necesito permiso para usar el micrófono. Toca la carita.'); return; }
+      if (c !== 6 && c !== 7) { errCount++; if (errCount >= 3) setStatus('El micrófono está fallando (código ' + c + '). Revisa que la app de Google esté activa.'); }
       again(c === 8 ? 1200 : (c === 2 || c === 1 || c === 4) ? 2500 : 350);
     });
+    N.addListener('speakStart', function () { spoke = true; clearTimeout(startTimer); });
     N.addListener('speakEnd', function () { finishSpeak(); });
   }
 
