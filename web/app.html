@@ -124,14 +124,15 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   // ---------- Ajustes guardados en el equipo ----------
-  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'gemini', model: 'gemini-3.5-flash', keys: {}, armed: true, rate: 1, pitch: 1 };
+  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'gemini', model: 'gemini-3.5-flash-lite', keys: {}, armed: true, rate: 1, pitch: 1 };
   var cfg = {}, facts = [];
   (function () {
     var k, s = null;
     try { s = JSON.parse(localStorage.getItem('ray_cfg') || 'null'); } catch (e) {}
     for (k in DEF) cfg[k] = (s && s[k] !== undefined) ? s[k] : DEF[k];
     if (s && s.provider === undefined) { if (s.key) cfg.provider = 'claude'; else cfg.model = DEF.model; }
-    if (!cfg.model || /^gemini-(flash|pro|flash-lite)-latest$/.test(cfg.model) || /^gemini-2\./.test(cfg.model)) cfg.model = cfg.provider === 'gemini' ? 'gemini-3.5-flash' : cfg.model;
+    if (!cfg.model || /^gemini-(flash|pro|flash-lite)-latest$/.test(cfg.model) || /^gemini-2\./.test(cfg.model)) cfg.model = cfg.provider === 'gemini' ? 'gemini-3.5-flash-lite' : cfg.model;
+    if (cfg.provider === 'gemini' && cfg.model === 'gemini-3.5-flash' && !cfg.speedV2) { cfg.model = 'gemini-3.5-flash-lite'; cfg.speedV2 = true; }
     if (!cfg.keys || typeof cfg.keys !== 'object') cfg.keys = {};
     if (cfg.key && !cfg.keys[cfg.provider]) cfg.keys[cfg.provider] = cfg.key;
     try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {}
@@ -156,7 +157,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     ['PT', 'Portugal', 'pt-PT'], ['GB', 'Reino Unido', 'en-GB'], ['RU', 'Rusia', 'ru-RU'], ['OT', 'Otro país', '']
   ];
   var COLORS = ['#FF7A45', '#FFC233', '#3DBE7B', '#18B8A6', '#38A9F0', '#3D6BF0', '#FF5FA2', '#E5484D', '#8A5A3C', '#7A8794', '#F2A900', '#00A86B'];
-  var MODELS = { gemini: 'gemini-3.5-flash', openai: 'chat-latest', claude: 'claude-sonnet-5-5' };
+  var MODELS = { gemini: 'gemini-3.5-flash-lite', openai: 'chat-latest', claude: 'claude-sonnet-5-5' };
   var SAMPLE = { es: 'Hola, soy Ray. Así sueno con esta voz.', en: 'Hi, I am Ray. This is how I sound with this voice.', pt: 'Olá, eu sou o Ray. É assim que eu falo com esta voz.', fr: 'Bonjour, je suis Ray. Voici ma voix.', it: 'Ciao, sono Ray. Questa è la mia voce.', de: 'Hallo, ich bin Ray. So klinge ich mit dieser Stimme.' };
   function countryName(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][1]; return ''; }
   function countryLocale(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][2]; return ''; }
@@ -365,7 +366,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       { 'content-type': 'application/json', 'x-goog-api-key': key },
       { system_instruction: { parts: [{ text: system }] },
         contents: msgs.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; }),
-        generationConfig: { maxOutputTokens: 1500, thinkingConfig: { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' } } }, 15000).then(function (j) {
+        generationConfig: { maxOutputTokens: 1200, thinkingConfig: { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' } } }, 12000).then(function (j) {
       var c = j && j.candidates && j.candidates[0], parts = (c && c.content && c.content.parts) || [];
       return parts.filter(function (p) { return !p.thought; }).map(function (p) { return p.text || ''; }).join('');
     });
@@ -385,14 +386,15 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     }
     // Gemini: si el modelo elegido falla o tarda, prueba con el liviano
     return gemini(model, key, system, msgs).catch(function (e) {
-      if (/^(tiempo|400|404|500|503|429)$/.test(String(e && e.code)) && model !== 'gemini-3.5-flash-lite' && !/api key/i.test(String(e && e.message))) {
-        return gemini('gemini-3.5-flash-lite', key, system, msgs);
+      var alt = model === 'gemini-3.5-flash-lite' ? 'gemini-3.5-flash' : 'gemini-3.5-flash-lite';
+      if (/^(tiempo|400|404|500|503|429)$/.test(String(e && e.code)) && !/api key/i.test(String(e && e.message))) {
+        return gemini(alt, key, system, msgs);
       }
       throw e;
     });
   }
   function messages() {
-    var h = hist.slice(-20);
+    var h = hist.slice(-12);
     while (h.length && h[0].role !== 'user') h.shift();
     return h;
   }
