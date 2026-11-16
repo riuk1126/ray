@@ -60,9 +60,9 @@ public class RayNative extends Plugin {
       ttsReady = (status == TextToSpeech.SUCCESS);
       if (ttsReady) {
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-          @Override public void onStart(String id) { ev("speakStart", null); }
-          @Override public void onDone(String id) { ev("speakEnd", null); }
-          @Override public void onError(String id) { ev("speakEnd", null); }
+          @Override public void onStart(String id) { JSObject d = new JSObject(); d.put("id", id); ev("speakStart", d); }
+          @Override public void onDone(String id) { JSObject d = new JSObject(); d.put("id", id); ev("speakEnd", d); }
+          @Override public void onError(String id) { JSObject d = new JSObject(); d.put("id", id); ev("speakEnd", d); }
         });
       }
     });
@@ -201,6 +201,9 @@ public class RayNative extends Plugin {
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang);
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        // Cortar antes cuando la persona deja de hablar
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 800);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 600);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
         rec.startListening(i);
         call.resolve();
@@ -253,6 +256,9 @@ public class RayNative extends Plugin {
     String lang = call.getString("lang", "es-PE");
     Float rate = call.getFloat("rate", 1.0f);
     Float pitch = call.getFloat("pitch", 1.0f);
+    Boolean queue = call.getBoolean("queue", false);
+    String uid = call.getString("id", "");
+    if (uid == null || uid.isEmpty()) uid = "ray" + System.currentTimeMillis();
     if (!ttsReady || text == null || text.isEmpty()) { call.reject("tts_not_ready"); return; }
     try {
       boolean set = false;
@@ -267,7 +273,7 @@ public class RayNative extends Plugin {
       if (!set) tts.setLanguage(Locale.forLanguageTag(lang));
       tts.setSpeechRate(rate == null ? 1.0f : rate);
       tts.setPitch(pitch == null ? 1.0f : pitch);
-      tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ray" + System.currentTimeMillis());
+      tts.speak(text, (queue != null && queue) ? TextToSpeech.QUEUE_ADD : TextToSpeech.QUEUE_FLUSH, null, uid);
       call.resolve();
     } catch (Exception e) {
       call.reject(String.valueOf(e.getMessage()));

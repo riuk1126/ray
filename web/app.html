@@ -260,7 +260,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   // ---------- Conversación ----------
   var statusEl = $('status'), youEl = $('you'), replyEl = $('reply'), chatEl = $('chat'), setupEl = $('setup'), armedBtn = $('armed');
   var mode = 'idle', active = false, manual = false, asleep = false, convoUntil = 0, lastTalk = Date.now();
-  var errCount = 0, spoke = false, startTimer = null;
+  var errCount = 0, spoke = false, startTimer = null, earlyTimer = null, stream = null;
   var hist = [], calmTimer = null, speakTimer = null, againTimer = null, setupOpen = false, micOk = false;
   // Solo voz: no se escribe la conversación. La línea de estado solo aparece si hay un problema que resolver.
   function setStatus(t) { t = String(t || ''); statusEl.textContent = /^(Te escucho|Pensando|Toca la carita para hablar|Di «hola Ray»|Dormido)/.test(t) ? '' : t; }
@@ -288,6 +288,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     });
   }
   function stopAll() {
+    stream = null; clearTimeout(earlyTimer);
     clearTimeout(againTimer); clearTimeout(speakTimer);
     if (N) { try { N.stopListen(); } catch (e) {} try { N.stopSpeak(); } catch (e) {} }
     talking = false; mode = 'idle'; manual = false;
@@ -323,6 +324,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
 
   function finishSpeak(mood) {
     if (mode !== 'speaking') return;
+    stream = null;
     clearTimeout(speakTimer); clearTimeout(startTimer);
     talking = false; mode = 'idle'; lastTalk = Date.now();
     convoUntil = Date.now() + 25000;
@@ -393,6 +395,90 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       throw e;
     });
   }
+  function canStream() { return !!VERSION && !newer('1.2.0', VERSION); }
+  function streamGemini(model, key, system, msgs, onText) {
+    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 12000);
+    return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':streamGenerateContent?alt=sse', {
+      method: 'POST', signal: ac.signal,
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({ system_instruction: { parts: [{ text: system }] },
+        contents: msgs.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; }),
+        generationConfig: { maxOutputTokens: 1200, thinkingConfig: { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' } } })
+    }).then(function (r) {
+      if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { clearTimeout(t); var e = (j && j.error) || {}; throw { code: String(r.status), message: String(e.message || ('HTTP ' + r.status)) }; });
+      var rd = r.body.getReader(), dec = new TextDecoder(), lb = '', full = '';
+      function pump() {
+        return rd.read().then(function (x) {
+          clearTimeout(t);
+          if (x.done) return full;
+          t = setTimeout(function () { ac.abort(); }, 12000);
+          lb += dec.decode(x.value, { stream: true });
+          var lines = lb.split('\n'); lb = lines.pop();
+          lines.forEach(function (l) {
+            if (l.indexOf('data:') !== 0) return;
+            try {
+              var j = JSON.parse(l.slice(5)), c = j.candidates && j.candidates[0], parts = (c && c.content && c.content.parts) || [];
+              parts.forEach(function (p) { if (!p.thought && p.text) full += p.text; });
+            } catch (e) {}
+          });
+          onText(full);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) { clearTimeout(t); if (e && e.code) throw e; throw { code: (e && e.name === 'AbortError') ? 'tiempo' : 'red', message: String((e && e.message) || e) }; });
+  }
+  function sayPart(text, first) {
+    text = text.replace(/[*_#`]/g, '').trim();
+    if (!text || !stream) return;
+    var id = 'rs' + Date.now() + Math.random().toString(36).slice(2, 6);
+    stream.ids[id] = 1; stream.pending++;
+    if (first) {
+      clearTimeout(againTimer);
+      mode = 'speaking'; lastMood = stream.mood || 'neutral';
+      setFace(lastMood === 'neutral' ? 'habla' : lastMood); talking = true; setStatus('');
+    }
+    stream.chars += text.length;
+    clearTimeout(speakTimer);
+    speakTimer = setTimeout(function () { stream = null; finishSpeak(); }, 5000 + stream.chars * 110);
+    N.speak({ text: text, voice: cfg.voice || '', lang: cfg.lang || 'es-PE', rate: Number(cfg.rate) || 1, pitch: Number(cfg.pitch) || 1, queue: !first, id: id }).catch(function () {
+      if (!stream) return; delete stream.ids[id]; stream.pending--;
+      if (stream.done && stream.pending <= 0) { stream = null; finishSpeak(); }
+    });
+  }
+  function askStream(model) {
+    var st = stream = { ids: {}, pending: 0, done: false, said: 0, mood: null, started: false, chars: 0 };
+    function body(full) {
+      var m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(full);
+      if (m) { if (!st.mood) { var md = m[1].toLowerCase().replace('ñ', 'n'); st.mood = (FACES[md] && !/dormido|escucha|habla/.test(md)) ? md : 'neutral'; } full = full.slice(m[0].length); }
+      else if (/^\s*[^\[\s]/.test(full) || full.length > 14) { if (!st.mood) st.mood = 'neutral'; }
+      else return null;
+      var k = full.search(/\[recordar/i); if (k >= 0) full = full.slice(0, k);
+      return full.replace(/\[[a-záéíóúñ]+\]/gi, '');
+    }
+    function flush(full, end) {
+      if (stream !== st) return;
+      var b = body(full); if (b === null) return;
+      var rest = b.slice(st.said), re = /[^.!?…\n]*[.!?…\n]+(\s|$)/g, mm, cut = 0;
+      while ((mm = re.exec(rest)) && mm[0].length) { if (rest.slice(0, re.lastIndex).trim().length >= (st.started ? 1 : 12)) cut = re.lastIndex; }
+      if (end) cut = rest.length;
+      if (cut > 0) { var part = rest.slice(0, cut); st.said += cut; if (part.trim()) { sayPart(part, !st.started); st.started = true; } }
+    }
+    return streamGemini(model, cfg.key, systemPrompt(), messages(), function (full) { flush(full, false); }).then(function (full) {
+      flush(full, true);
+      var p = parse(full);
+      if (stream === st) {
+        st.done = true;
+        if (!st.started) { stream = null; speak(p.text || 'Me quedé en blanco. ¿Me lo repites?', p.mood); }
+        else if (st.pending <= 0) { stream = null; finishSpeak(); }
+      }
+      return p;
+    }, function (e) {
+      if (st.started) { st.done = true; if (st.pending <= 0 && stream === st) { stream = null; finishSpeak(); } return { text: '', partial: true }; }
+      if (stream === st) stream = null;
+      throw e;
+    });
+  }
   function messages() {
     var h = hist.slice(-12);
     while (h.length && h[0].role !== 'user') h.shift();
@@ -409,7 +495,16 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     hist.push({ role: 'user', content: text });
     mode = 'thinking';
     setFace('pensando'); setStatus('Pensando…'); replyEl.textContent = '';
-    brain(cfg.provider || 'gemini', cfg.key, cfg.model || MODELS[cfg.provider || 'gemini'], systemPrompt(), messages()).then(function (txt) {
+    var prov = cfg.provider || 'gemini', model = cfg.model || MODELS[prov];
+    var job = (prov === 'gemini' && canStream() && window.ReadableStream)
+      ? askStream(model).catch(function (e) {
+          var alt = model === 'gemini-3.5-flash-lite' ? 'gemini-3.5-flash' : 'gemini-3.5-flash-lite';
+          if (/^(tiempo|400|404|500|503|429)$/.test(String(e && e.code)) && !/api key/i.test(String(e && e.message))) return askStream(alt);
+          throw e;
+        }).then(function (p) { if (p && p.text) hist.push({ role: 'assistant', content: p.text }); return null; })
+      : brain(prov, cfg.key, model, systemPrompt(), messages());
+    job.then(function (txt) {
+      if (txt === null) return;
       var p = parse(txt);
       if (!p.text) p.text = 'Me quedé en blanco. ¿Me lo repites?';
       hist.push({ role: 'assistant', content: p.text });
@@ -438,8 +533,16 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (!t) return;
       if (!active && hasWake(t)) { active = true; asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
       youEl.textContent = (active ? 'Tú: ' : 'Oí: ') + t;
+      clearTimeout(earlyTimer);
+      if (active) earlyTimer = setTimeout(function () {
+        if (mode !== 'listening' || !active) return;
+        mode = 'idle';
+        try { N.stopListen(); } catch (e) {}
+        ask(t);
+      }, 1100);
     });
     N.addListener('listenFinal', function (d) {
+      clearTimeout(earlyTimer);
       if (mode !== 'listening') return;
       mode = 'idle';
       var t = String((d && d.text) || '').trim();
@@ -456,14 +559,23 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       again(c === 8 ? 1200 : (c === 2 || c === 1 || c === 4) ? 2500 : 350);
     });
     N.addListener('speakStart', function () { spoke = true; clearTimeout(startTimer); });
-    N.addListener('speakEnd', function () { finishSpeak(); });
+    N.addListener('speakEnd', function (d) {
+      var id = d && d.id;
+      if (stream && id && stream.ids[id]) {
+        delete stream.ids[id]; stream.pending--;
+        if (stream.done && stream.pending <= 0) { stream = null; finishSpeak(); }
+        return;
+      }
+      if (stream) return;
+      finishSpeak();
+    });
   }
 
   $('faceWrap').addEventListener('click', function () {
     if (setupOpen || !cfg.done || !N) return;
     lastTalk = Date.now();
     if (mode === 'thinking') return;
-    if (mode === 'speaking') { clearTimeout(speakTimer); try { N.stopSpeak(); } catch (e) {} talking = false; mode = 'idle'; }
+    if (mode === 'speaking') { stream = null; clearTimeout(speakTimer); try { N.stopSpeak(); } catch (e) {} talking = false; mode = 'idle'; }
     if (!micOk) { N.askMic().then(function (r2) { micOk = !!(r2 && r2.granted); if (micOk) { manual = true; startListen(); } }); return; }
     asleep = false;
     if (mode === 'listening') { active = true; manual = true; setFace('escucha'); setStatus('Te escucho…'); return; }
