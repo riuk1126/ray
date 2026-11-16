@@ -3,6 +3,8 @@ package com.raiki.ray;
 import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
+import java.util.HashSet;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -50,6 +52,32 @@ public class RayNative extends Plugin {
   private volatile boolean ttsReady = false;
   private final Handler main = new Handler(Looper.getMainLooper());
 
+  // Silenciar el pitido del micrófono: mientras Ray escucha se silencian los sonidos
+  // del sistema; vuelven en cuanto Ray habla, se detiene o la app pasa a segundo plano.
+  private final int[] BEEP = { AudioManager.STREAM_MUSIC, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM };
+  private final HashSet<Integer> muted = new HashSet<>();
+  private void muteBeep() {
+    try {
+      AudioManager am = (AudioManager) getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+      for (int st : BEEP) {
+        try { if (!muted.contains(st) && !am.isStreamMute(st)) { am.adjustStreamVolume(st, AudioManager.ADJUST_MUTE, 0); muted.add(st); } } catch (Exception e) { }
+      }
+    } catch (Exception e) { }
+  }
+  private void unmuteBeep() {
+    try {
+      AudioManager am = (AudioManager) getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+      for (Integer st : muted) { try { am.adjustStreamVolume(st, AudioManager.ADJUST_UNMUTE, 0); } catch (Exception e) { } }
+    } catch (Exception e) { }
+    muted.clear();
+  }
+
+  @Override
+  protected void handleOnPause() {
+    super.handleOnPause();
+    main.post(() -> { try { if (rec != null) { rec.cancel(); rec.destroy(); rec = null; } } catch (Exception e) { } unmuteBeep(); });
+  }
+
   private void ev(String name, JSObject data) {
     notifyListeners(name, data == null ? new JSObject() : data);
   }
@@ -70,6 +98,7 @@ public class RayNative extends Plugin {
 
   @Override
   protected void handleOnDestroy() {
+    unmuteBeep();
     try { if (rec != null) { rec.destroy(); rec = null; } } catch (Exception e) { }
     try { if (tts != null) { tts.stop(); tts.shutdown(); } } catch (Exception e) { }
   }
@@ -193,6 +222,7 @@ public class RayNative extends Plugin {
       try {
         if (!SpeechRecognizer.isRecognitionAvailable(getContext())) { call.reject("no_recognizer"); return; }
         if (rec != null) { try { rec.cancel(); rec.destroy(); } catch (Exception e) { } rec = null; }
+        muteBeep();
         rec = SpeechRecognizer.createSpeechRecognizer(getContext());
         rec.setRecognitionListener(listener);
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
@@ -217,6 +247,7 @@ public class RayNative extends Plugin {
   public void stopListen(final PluginCall call) {
     main.post(() -> {
       try { if (rec != null) { rec.cancel(); rec.destroy(); rec = null; } } catch (Exception e) { }
+      if (!call.getBoolean("keepMuted", false)) unmuteBeep();
       call.resolve();
     });
   }
@@ -260,6 +291,7 @@ public class RayNative extends Plugin {
     String uid = call.getString("id", "");
     if (uid == null || uid.isEmpty()) uid = "ray" + System.currentTimeMillis();
     if (!ttsReady || text == null || text.isEmpty()) { call.reject("tts_not_ready"); return; }
+    main.post(this::unmuteBeep);
     try {
       boolean set = false;
       if (voiceName != null && !voiceName.isEmpty()) {

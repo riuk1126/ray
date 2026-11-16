@@ -273,7 +273,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     clearTimeout(againTimer);
     if (setupOpen || document.hidden) return;
     if (cfg.armed || Date.now() < convoUntil) againTimer = setTimeout(startListen, ms || 300);
-    else { if (!asleep) setFace('neutral'); setStatus('Toca la carita para hablar'); }
+    else { if (N) { try { N.stopListen(); } catch (e) {} } if (!asleep) setFace('neutral'); setStatus('Toca la carita para hablar'); }
   }
   function startListen() {
     if (!N || mode !== 'idle' || !cfg.done || setupOpen || !micOk || document.hidden) return;
@@ -554,9 +554,9 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (mode !== 'listening') return;
       mode = 'idle'; manual = false;
       var c = d && d.code;
-      if (c === 9) { micOk = false; setFace('triste'); setStatus('Necesito permiso para usar el micrófono. Toca la carita.'); return; }
-      if (c !== 6 && c !== 7) { errCount++; if (errCount >= 3) setStatus('El micrófono está fallando (código ' + c + '). Revisa que la app de Google esté activa.'); }
-      again(c === 8 ? 1200 : (c === 2 || c === 1 || c === 4) ? 2500 : 350);
+      if (c === 9) { try { N.stopListen(); } catch (e) {} micOk = false; setFace('triste'); setStatus('Necesito permiso para usar el micrófono. Toca la carita.'); return; }
+      if (c === 6 || c === 7) errCount = 0; else errCount++;
+      again(c === 8 ? 600 : (c === 2 || c === 1 || c === 4) ? Math.min(8000, 1500 * errCount) : 150);
     });
     N.addListener('speakStart', function () { spoke = true; clearTimeout(startTimer); });
     N.addListener('speakEnd', function (d) {
