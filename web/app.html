@@ -116,13 +116,16 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   // ---------- Ajustes guardados en el equipo ----------
-  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'gemini', model: 'gemini-flash-latest', armed: true, rate: 1, pitch: 1 };
+  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'gemini', model: 'gemini-3.5-flash', keys: {}, armed: true, rate: 1, pitch: 1 };
   var cfg = {}, facts = [];
   (function () {
     var k, s = null;
     try { s = JSON.parse(localStorage.getItem('ray_cfg') || 'null'); } catch (e) {}
     for (k in DEF) cfg[k] = (s && s[k] !== undefined) ? s[k] : DEF[k];
     if (s && s.provider === undefined) { if (s.key) cfg.provider = 'claude'; else cfg.model = DEF.model; }
+    if (!cfg.model || /^gemini-(flash|pro|flash-lite)-latest$/.test(cfg.model) || /^gemini-2\./.test(cfg.model)) cfg.model = cfg.provider === 'gemini' ? 'gemini-3.5-flash' : cfg.model;
+    if (!cfg.keys || typeof cfg.keys !== 'object') cfg.keys = {};
+    if (cfg.key && !cfg.keys[cfg.provider]) cfg.keys[cfg.provider] = cfg.key;
     try { var f = JSON.parse(localStorage.getItem('ray_facts') || '[]'); if (Array.isArray(f)) facts = f; } catch (e) {}
   })();
   function save() { try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {} }
@@ -144,7 +147,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     ['PT', 'Portugal', 'pt-PT'], ['GB', 'Reino Unido', 'en-GB'], ['RU', 'Rusia', 'ru-RU'], ['OT', 'Otro país', '']
   ];
   var COLORS = ['#FF7A45', '#FFC233', '#3DBE7B', '#18B8A6', '#38A9F0', '#3D6BF0', '#FF5FA2', '#E5484D', '#8A5A3C', '#7A8794', '#F2A900', '#00A86B'];
-  var MODELS = { gemini: 'gemini-flash-latest', claude: 'claude-sonnet-5-5' };
+  var MODELS = { gemini: 'gemini-3.5-flash', openai: 'chat-latest', claude: 'claude-sonnet-5-5' };
   var SAMPLE = { es: 'Hola, soy Ray. Así sueno con esta voz.', en: 'Hi, I am Ray. This is how I sound with this voice.', pt: 'Olá, eu sou o Ray. É assim que eu falo com esta voz.', fr: 'Bonjour, je suis Ray. Voici ma voix.', it: 'Ciao, sono Ray. Questa è la mia voce.', de: 'Hallo, ich bin Ray. So klinge ich mit dieser Stimme.' };
   function countryName(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][1]; return ''; }
   function countryLocale(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][2]; return ''; }
@@ -333,6 +336,49 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     startTimer = setTimeout(function () { plain('Mi voz elegida no sonó; uso la del sistema. Sube el volumen multimedia o cambia la voz en Ajustes.'); }, 3000);
     N.speak(payload).catch(function () { clearTimeout(startTimer); plain('Mi voz elegida falló; uso la del sistema.'); });
   }
+  // ---------- Cerebro (directo desde la app, con tiempo límite) ----------
+  function post(url, headers, body, ms) {
+    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, ms || 30000);
+    return fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body), signal: ac.signal }).then(function (r) {
+      clearTimeout(t);
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) { var e = (j && j.error) || {}; throw { code: String(r.status), message: String(e.message || e.type || ('HTTP ' + r.status)) }; }
+        return j;
+      });
+    }, function (e) { clearTimeout(t); throw { code: (e && e.name === 'AbortError') ? 'tiempo' : 'red', message: String((e && e.message) || e) }; });
+  }
+  function gemini(model, key, system, msgs) {
+    return post('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
+      { 'content-type': 'application/json', 'x-goog-api-key': key },
+      { system_instruction: { parts: [{ text: system }] },
+        contents: msgs.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; }),
+        generationConfig: { maxOutputTokens: 2048 } }, 30000).then(function (j) {
+      var c = j && j.candidates && j.candidates[0], parts = (c && c.content && c.content.parts) || [];
+      return parts.filter(function (p) { return !p.thought; }).map(function (p) { return p.text || ''; }).join('');
+    });
+  }
+  function brain(prov, key, model, system, msgs) {
+    if (prov === 'openai') {
+      return post('https://api.openai.com/v1/chat/completions', { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
+        { model: model, messages: [{ role: 'system', content: system }].concat(msgs) }, 45000).then(function (j) {
+        return (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+      });
+    }
+    if (prov === 'claude') {
+      return post('https://api.anthropic.com/v1/messages', { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        { model: model, max_tokens: 700, system: system, messages: msgs }, 45000).then(function (j) {
+        return ((j && j.content) || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('');
+      });
+    }
+    // Gemini: si el modelo elegido falla o tarda, prueba con el liviano
+    return gemini(model, key, system, msgs).catch(function (e) {
+      if (/^(tiempo|404|500|503|429)$/.test(String(e && e.code)) && model !== 'gemini-3.5-flash-lite') {
+        setStatus('Pensando con el modelo liviano…');
+        return gemini('gemini-3.5-flash-lite', key, system, msgs);
+      }
+      throw e;
+    });
+  }
   function messages() {
     var h = hist.slice(-20);
     while (h.length && h[0].role !== 'user') h.shift();
@@ -344,12 +390,13 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     clearTimeout(calmTimer); clearTimeout(againTimer);
     asleep = false; manual = false; lastTalk = Date.now();
     youEl.textContent = 'Tú: ' + text;
+    cfg.key = (cfg.keys && cfg.keys[cfg.provider]) || cfg.key || '';
     if (!cfg.key) { speak('Me falta la clave del cerebro para poder pensar. Toca Ajustes y pégala.', 'triste'); return; }
     hist.push({ role: 'user', content: text });
     mode = 'thinking';
     setFace('pensando'); setStatus('Pensando…'); replyEl.textContent = '';
-    N.chat({ provider: cfg.provider || 'gemini', key: cfg.key, model: cfg.model || MODELS[cfg.provider || 'gemini'], system: systemPrompt(), messages: messages(), maxTokens: 700 }).then(function (res) {
-      var p = parse(res && res.text);
+    brain(cfg.provider || 'gemini', cfg.key, cfg.model || MODELS[cfg.provider || 'gemini'], systemPrompt(), messages()).then(function (txt) {
+      var p = parse(txt);
       if (!p.text) p.text = 'Me quedé en blanco. ¿Me lo repites?';
       hist.push({ role: 'assistant', content: p.text });
       speak(p.text, p.mood);
@@ -359,8 +406,10 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       var t = 'No pude responder esta vez. Inténtalo de nuevo.';
       if (code === '401' || code === '403' || (code === '400' && /api key/i.test(msg))) t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
       else if (code === 'red') t = 'No tengo internet ahora. Revisa tu conexión.';
+      else if (code === 'tiempo') t = 'El cerebro tardó demasiado en responder. Inténtalo otra vez.';
       else if (code === '404') t = 'El modelo configurado no existe. Revísalo en Ajustes.';
-      else if (code === '429') t = cfg.provider === 'claude' ? 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.' : 'Llegamos al límite gratuito por ahora. Espera un rato y seguimos.';
+      else if (code === '429' && /quota|billing|insufficient/i.test(msg) && cfg.provider !== 'gemini') t = 'Esa cuenta no tiene saldo. Recárgala para seguir.';
+      else if (code === '429') t = cfg.provider !== 'gemini' ? 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.' : 'Llegamos al límite gratuito por ahora. Espera un rato y seguimos.';
       else if (code === '529' || code === '503') t = 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.';
       else if (code === '400' && /credit|balance/i.test(msg)) t = 'La cuenta del cerebro no tiene saldo. Recárgala para seguir.';
       speak(t, 'triste');
@@ -491,11 +540,14 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
         '<label class="f" for="sHue">Otro color<input type="range" id="sHue" min="0" max="359" step="1" value="20"></label>' +
         '<div class="row"><button class="btn" data-face="feliz" type="button">Alegre</button><button class="btn" data-face="sorpresa" type="button">Sorpresa</button><button class="btn" data-face="guino" type="button">Guiño</button></div>';
     } else {
-      h = '<h2>Mi cerebro</h2><p>Para pensar necesito una clave. Con Gemini es gratis: se saca con tu cuenta de Google en Google AI Studio (aistudio.google.com), botón «Get API key». Pégala aquí una sola vez; queda guardada solo en este equipo.</p>' +
-        '<label class="f" for="sProv">Cerebro<select id="sProv"><option value="gemini"' + (draft.provider !== 'claude' ? ' selected' : '') + '>Gemini de Google (gratis, con límite diario)</option><option value="claude"' + (draft.provider === 'claude' ? ' selected' : '') + '>Claude de Anthropic (de pago por uso)</option></select></label>' +
-        '<label class="f" for="sKey">Clave<input type="password" id="sKey" autocomplete="off" placeholder="Pega tu clave aquí" value="' + esc(draft.key) + '"></label>' +
+      var HELP = { gemini: 'Gratis con límite diario. La clave sale de tu cuenta de Google en aistudio.google.com/api-keys.', openai: 'De pago por uso, aparte de ChatGPT Plus. La clave sale de platform.openai.com/api-keys.', claude: 'De pago por uso. La clave sale de platform.claude.com, en «API keys».' };
+      var pv = draft.provider || 'gemini';
+      h = '<h2>Mi cerebro</h2><p>Elige con qué pienso y pega su clave una sola vez. Queda guardada solo en este equipo.</p>' +
+        '<label class="f" for="sProv">Cerebro<select id="sProv"><option value="gemini"' + (pv === 'gemini' ? ' selected' : '') + '>Gemini de Google</option><option value="openai"' + (pv === 'openai' ? ' selected' : '') + '>ChatGPT de OpenAI</option><option value="claude"' + (pv === 'claude' ? ' selected' : '') + '>Claude de Anthropic</option></select></label>' +
+        '<p id="sHelp">' + esc(HELP[pv]) + '</p>' +
+        '<label class="f" for="sKey">Clave<input type="password" id="sKey" autocomplete="off" placeholder="Pega tu clave aquí" value="' + esc((draft.keys && draft.keys[pv]) || '') + '"></label>' +
         '<label class="f" for="sModel">Modelo<input type="text" id="sModel" autocomplete="off" value="' + esc(draft.model) + '"></label>' +
-        '<p>Si aún no la tienes, toca Listo y la pegas después en Ajustes.</p><p class="ver">Ray ' + esc(VERSION) + '</p>';
+        '<p class="ver">Ray ' + esc(VERSION) + '</p>';
     }
     setupEl.innerHTML = h + nav;
     setupEl.scrollTop = 0;
@@ -506,7 +558,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (step < STEPS - 1) { step++; if (step === 2 && !draft.voice) { var v0 = voicesFor(draft.lang, draft.country)[0]; if (v0) draft.voice = v0.name; } renderStep(); }
       else closeSetup(true);
     };
-    if (step === 4) { $('sProv').onchange = function () { if (this.value !== draft.provider) { draft.provider = this.value; draft.key = ''; $('sKey').value = ''; draft.model = MODELS[draft.provider]; $('sModel').value = draft.model; } }; }
+    if (step === 4) { $('sProv').onchange = function () { draft.keys = JSON.parse(JSON.stringify(draft.keys || {})); draft.keys[draft.provider || 'gemini'] = $('sKey').value.trim(); draft.provider = this.value; draft.model = MODELS[draft.provider]; renderStep(); }; }
     if (step === 1) {
       $('sCountry').onchange = function () { draft.country = this.value; var cl = countryLocale(draft.country); if (cl) { draft.lang = cl; draft.voice = ''; } renderStep(); };
       $('sLang').onchange = function () { draft.lang = this.value; draft.voice = ''; };
@@ -545,7 +597,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       }
     } else if (step === 1) { draft.country = $('sCountry').value; draft.lang = $('sLang').value || draft.lang; }
     else if (step === 2) { draft.pitch = Number($('sPitch').value) || 1; draft.rate = Number($('sRate').value) || 1; }
-    else if (step === 4) { draft.provider = $('sProv').value; draft.key = $('sKey').value.trim(); draft.model = $('sModel').value.trim() || MODELS[draft.provider]; }
+    else if (step === 4) { var pk = $('sProv').value; draft.keys = JSON.parse(JSON.stringify(draft.keys || {})); draft.keys[pk] = $('sKey').value.trim(); draft.provider = pk; draft.key = draft.keys[pk]; draft.model = $('sModel').value.trim() || MODELS[pk]; }
     return true;
   }
   function openSetup() {
