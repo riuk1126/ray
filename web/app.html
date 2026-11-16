@@ -364,7 +364,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       else if (code === '529' || code === '503') t = 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.';
       else if (code === '400' && /credit|balance/i.test(msg)) t = 'La cuenta del cerebro no tiene saldo. Recárgala para seguir.';
       speak(t, 'triste');
-      setTimeout(function () { setStatus('Detalle: ' + (code || 'sin código') + ' ' + msg.slice(0, 120)); }, 50);
+      youEl.textContent = 'Detalle del error: ' + (code || 'sin código') + ' ' + msg.slice(0, 140);
     });
   }
 
