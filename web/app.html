@@ -276,6 +276,13 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   // ---------- Conversación ----------
   var statusEl = $('status'), youEl = $('you'), replyEl = $('reply'), chatEl = $('chat'), setupEl = $('setup'), armedBtn = $('armed');
   var mode = 'idle', active = false, manual = false, asleep = false, convoUntil = 0, lastTalk = Date.now();
+  var lastListenAt = 0, heardAt = 0, watchT = null;
+  function armWatch() {
+    clearTimeout(watchT);
+    watchT = setTimeout(function () {
+      if (mode === 'listening' && !heardAt) { rlog('watchdog', {}); mode = 'idle'; again(300); }
+    }, 9000);
+  }
   var errCount = 0, spoke = false, startTimer = null, earlyTimer = null, stream = null;
   var hist = [], calmTimer = null, speakTimer = null, againTimer = null, setupOpen = false, micOk = false;
   // Solo voz: no se escribe la conversación. La línea de estado solo aparece si hay un problema que resolver.
@@ -296,6 +303,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     mode = 'listening';
     active = manual || Date.now() < convoUntil;
     rlog('listen', { active: active });
+    lastListenAt = Date.now(); heardAt = 0; armWatch();
     if (active) { asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
     else { setFace(asleep ? 'dormido' : 'neutral'); setStatus(asleep ? 'Dormido. Di «hola Ray» para despertarme' : 'Di «hola Ray» o toca la carita'); }
     N.listen({ lang: cfg.lang || 'es-PE' }).catch(function (e) {
@@ -554,6 +562,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (mode !== 'listening') return;
       var t = (d && d.text) || '';
       if (!t) return;
+      heardAt = Date.now(); armWatch();
       if (!active && hasWake(t)) { rlog('wake', { n: t.length }); active = true; asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
       youEl.textContent = (active ? 'Tú: ' : 'Oí: ') + t;
       clearTimeout(earlyTimer);
@@ -566,7 +575,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       }, 1100);
     });
     N.addListener('listenFinal', function (d) {
-      clearTimeout(earlyTimer);
+      clearTimeout(earlyTimer); clearTimeout(watchT);
       rlog('final', { mode: mode, n: String((d && d.text) || '').length, active: active });
       if (mode !== 'listening') return;
       mode = 'idle';
@@ -577,12 +586,15 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     });
     N.addListener('listenError', function (d) {
       if (mode !== 'listening') return;
-      mode = 'idle'; manual = false;
       var c = d && d.code;
-      rlog('listen_err', { c: c });
+      rlog('listen_err', { c: c, ms: Date.now() - lastListenAt });
+      // Un aviso de desconexión justo después de empezar es del micrófono anterior: no reiniciar
+      if ((c === 11 || c === 5) && Date.now() - lastListenAt < 1500) return;
+      clearTimeout(watchT);
+      mode = 'idle'; manual = false;
       if (c === 9) { try { N.stopListen(); } catch (e) {} micOk = false; setFace('triste'); setStatus('Necesito permiso para usar el micrófono. Toca la carita.'); return; }
       if (c === 6 || c === 7) errCount = 0; else errCount++;
-      again(c === 8 ? 600 : (c === 2 || c === 1 || c === 4) ? Math.min(8000, 1500 * errCount) : 150);
+      again(c === 8 ? 900 : (c === 2 || c === 1 || c === 4 || c === 11 || c === 5) ? Math.min(8000, 1000 + 1000 * errCount) : 350);
     });
     N.addListener('speakStart', function (d) { spoke = true; clearTimeout(startTimer); rlog('speak_start', { id: d && d.id }); });
     N.addListener('speakEnd', function (d) {

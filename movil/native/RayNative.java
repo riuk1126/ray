@@ -197,17 +197,22 @@ public class RayNative extends Plugin {
     call.resolve(r);
   }
 
-  private final RecognitionListener listener = new RecognitionListener() {
-    @Override public void onReadyForSpeech(Bundle params) { JSObject d = new JSObject(); d.put("state", "ready"); ev("listenState", d); }
-    @Override public void onBeginningOfSpeech() { JSObject d = new JSObject(); d.put("state", "speech"); ev("listenState", d); }
-    @Override public void onRmsChanged(float rmsdB) { }
-    @Override public void onBufferReceived(byte[] buffer) { }
-    @Override public void onEndOfSpeech() { JSObject d = new JSObject(); d.put("state", "end"); ev("listenState", d); }
-    @Override public void onError(int error) { JSObject d = new JSObject(); d.put("code", error); ev("listenError", d); }
-    @Override public void onResults(Bundle results) { JSObject d = new JSObject(); d.put("text", first(results)); ev("listenFinal", d); }
-    @Override public void onPartialResults(Bundle partialResults) { JSObject d = new JSObject(); d.put("text", first(partialResults)); ev("listenPartial", d); }
-    @Override public void onEvent(int eventType, Bundle params) { }
-  };
+  // Un oyente por cada micrófono: los avisos de uno viejo ya no afectan al actual
+  private RecognitionListener listenerFor(final SpeechRecognizer mine) {
+    return new RecognitionListener() {
+      private boolean cur() { return rec == mine; }
+      @Override public void onReadyForSpeech(Bundle params) { if (!cur()) return; JSObject d = new JSObject(); d.put("state", "ready"); ev("listenState", d); }
+      @Override public void onBeginningOfSpeech() { if (!cur()) return; JSObject d = new JSObject(); d.put("state", "speech"); ev("listenState", d); }
+      @Override public void onRmsChanged(float rmsdB) { }
+      @Override public void onBufferReceived(byte[] buffer) { }
+      @Override public void onEndOfSpeech() { if (!cur()) return; JSObject d = new JSObject(); d.put("state", "end"); ev("listenState", d); }
+      @Override public void onError(int error) { if (!cur()) return; JSObject d = new JSObject(); d.put("code", error); ev("listenError", d); }
+      @Override public void onResults(Bundle results) { if (!cur()) return; JSObject d = new JSObject(); d.put("text", first(results)); ev("listenFinal", d); }
+      @Override public void onPartialResults(Bundle partialResults) { if (!cur()) return; JSObject d = new JSObject(); d.put("text", first(partialResults)); ev("listenPartial", d); }
+      @Override public void onEvent(int eventType, Bundle params) { }
+    };
+  }
+
 
   private static String first(Bundle b) {
     if (b == null) return "";
@@ -221,10 +226,15 @@ public class RayNative extends Plugin {
     main.post(() -> {
       try {
         if (!SpeechRecognizer.isRecognitionAvailable(getContext())) { call.reject("no_recognizer"); return; }
-        if (rec != null) { try { rec.cancel(); rec.destroy(); } catch (Exception e) { } rec = null; }
         muteBeep();
-        rec = SpeechRecognizer.createSpeechRecognizer(getContext());
-        rec.setRecognitionListener(listener);
+        if (rec != null) {
+          try { rec.cancel(); } catch (Exception e) { try { rec.destroy(); } catch (Exception e2) { } rec = null; }
+        }
+        if (rec == null) {
+          SpeechRecognizer mine = SpeechRecognizer.createSpeechRecognizer(getContext());
+          rec = mine;
+          mine.setRecognitionListener(listenerFor(mine));
+        }
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
