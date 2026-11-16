@@ -241,9 +241,6 @@ public class RayNative extends Plugin {
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang);
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-        // Cortar antes cuando la persona deja de hablar
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 800);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 600);
         i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getContext().getPackageName());
         rec.startListening(i);
         call.resolve();
