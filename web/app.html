@@ -157,7 +157,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     ['PT', 'Portugal', 'pt-PT'], ['GB', 'Reino Unido', 'en-GB'], ['RU', 'Rusia', 'ru-RU'], ['OT', 'Otro país', '']
   ];
   var COLORS = ['#FF7A45', '#FFC233', '#3DBE7B', '#18B8A6', '#38A9F0', '#3D6BF0', '#FF5FA2', '#E5484D', '#8A5A3C', '#7A8794', '#F2A900', '#00A86B'];
-  var MODELS = { gemini: 'gemini-3.5-flash-lite', openai: 'chat-latest', claude: 'claude-sonnet-5-5' };
+  var MODELS = { gemini: 'gemini-3.5-flash-lite', openai: 'chat-latest', claude: 'claude-haiku-5-5' };
   var SAMPLE = { es: 'Hola, soy Ray. Así sueno con esta voz.', en: 'Hi, I am Ray. This is how I sound with this voice.', pt: 'Olá, eu sou o Ray. É assim que eu falo com esta voz.', fr: 'Bonjour, je suis Ray. Voici ma voix.', it: 'Ciao, sono Ray. Questa è la mia voce.', de: 'Hallo, ich bin Ray. So klinge ich mit dieser Stimme.' };
   function countryName(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][1]; return ''; }
   function countryLocale(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][2]; return ''; }
