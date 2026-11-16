@@ -17,15 +17,23 @@
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: light;
 }
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --ink-soft: color-mix(in srgb, var(--ink) 70%, transparent);
+    --glass: color-mix(in srgb, var(--ink) 7%, transparent);
+    --glass-strong: color-mix(in srgb, var(--ink) 14%, transparent);
+    --line: color-mix(in srgb, var(--ink) 28%, transparent);
+  }
+}
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; margin: 0; }
-body { background: var(--mood); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.5; transition: background-color 0.7s ease; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+body { background: var(--mood); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.5; transition: background-color 0.6s ease, color 0.6s ease; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
 main { width: 100%; max-width: 640px; height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 28px 20px 20px; }
 .face-wrap { flex: 1 1 0; min-height: 120px; display: flex; align-items: center; justify-content: center; }
 .face-wrap svg { width: 100%; max-width: 520px; max-height: 100%; display: block; }
 .fade { transition: opacity 0.2s ease; }
-.ink-fill { fill: var(--ink); }
-.ink-line { fill: none; stroke: var(--ink); stroke-linecap: round; stroke-linejoin: round; }
+.ink-fill { fill: var(--ink); transition: fill 0.6s ease; }
+.ink-line { fill: none; stroke: var(--ink); transition: stroke 0.6s ease; stroke-linecap: round; stroke-linejoin: round; }
 .acc-fill { fill: var(--accent); }
 .acc-line { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-width: 9; }
 .acc-text { fill: var(--accent); font-family: var(--font); font-weight: 800; }
@@ -36,8 +44,8 @@ main { width: 100%; max-width: 640px; height: 100%; display: flex; flex-directio
 .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .btn { min-height: 44px; padding: 0 18px; border-radius: 22px; border: 1px solid var(--line); background: var(--glass); color: var(--ink); font: inherit; font-size: 15px; font-weight: 500; }
 .btn:active { background: var(--glass-strong); }
-.btn.main { background: var(--ink); color: #FFFFFF; border-color: var(--ink); }
-.btn[aria-pressed="true"] { background: var(--ink); color: #FFFFFF; border-color: var(--ink); }
+.btn.main { background: var(--ink); color: var(--mood); border-color: var(--ink); }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--mood); border-color: var(--ink); }
 #setup { flex: 0 0 auto; max-height: 62%; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 #setup h2 { margin: 0; font-size: 21px; font-weight: 700; line-height: 1.25; }
 #setup p { margin: 0; font-size: 14px; color: var(--ink-soft); }
@@ -95,7 +103,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
 
   <div id="chat">
     <p class="status" id="status"></p>
-    <div class="talk">
+    <div class="talk" hidden>
       <p class="you" id="you"></p>
       <p class="reply" id="reply"></p>
     </div>
@@ -126,6 +134,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     if (!cfg.model || /^gemini-(flash|pro|flash-lite)-latest$/.test(cfg.model) || /^gemini-2\./.test(cfg.model)) cfg.model = cfg.provider === 'gemini' ? 'gemini-3.5-flash' : cfg.model;
     if (!cfg.keys || typeof cfg.keys !== 'object') cfg.keys = {};
     if (cfg.key && !cfg.keys[cfg.provider]) cfg.keys[cfg.provider] = cfg.key;
+    try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {}
     try { var f = JSON.parse(localStorage.getItem('ray_facts') || '[]'); if (Array.isArray(f)) facts = f; } catch (e) {}
   })();
   function save() { try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {} }
@@ -158,18 +167,19 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   }
 
   // ---------- Cara ----------
-  var BASE = { eyeL: 'oval', eyeR: 'oval', ew: 23, eh: 45, ey: 0, gx: 0, tilt: 0, mouth: 'curve', m: [172, 200, 190, 218, 208, 200], deco: '', bg: '#FFFFFF' };
+  var BASE = { eyeL: 'oval', eyeR: 'oval', ew: 23, eh: 45, ey: 0, gx: 0, tilt: 0, mouth: 'curve', m: [172, 200, 190, 218, 208, 200], deco: '', bg: '#FFFFFF', ink: '#232121' };
   function mk(o) { var r = {}, k; for (k in BASE) r[k] = BASE[k]; for (k in o) r[k] = o[k]; return r; }
   var FACES = {
     neutral:  mk({}),
-    escucha:  mk({ ew: 24, eh: 49, ey: -2, m: [178, 202, 190, 213, 202, 202] }),
-    feliz:    mk({ eyeL: 'up', eyeR: 'up', mouth: 'open', deco: 'feliz' }),
-    sorpresa: mk({ eh: 47, ey: -4, mouth: 'o', deco: 'sorpresa' }),
-    guino:    mk({ eyeR: 'wink', mouth: 'open', deco: 'guino' }),
-    pensando: mk({ ew: 22, eh: 43, ey: -4, gx: 6, m: [176, 216, 184, 195, 204, 203], deco: 'pensando' }),
-    dormido:  mk({ eyeL: 'down', eyeR: 'down', m: [176, 204, 190, 217, 204, 204], deco: 'dormido', bg: '#CFD9E8' }),
-    triste:   mk({ ew: 26, eh: 20, ey: 10, tilt: 14, m: [173, 215, 190, 198, 207, 215], bg: '#D6D4CB' }),
-    molesto:  mk({ ew: 27, eh: 18, ey: 8, tilt: -20, m: [174, 211, 190, 203, 206, 211], bg: '#F2A3A0' })
+    escucha:  mk({ ew: 24, eh: 49, ey: -2, m: [178, 202, 190, 213, 202, 202], bg: '#BFEBD8', ink: '#0F5A43' }),
+    habla:    mk({ bg: '#FFD3BF', ink: '#7A2E14' }),
+    feliz:    mk({ eyeL: 'up', eyeR: 'up', mouth: 'open', deco: 'feliz', bg: '#FFE29A', ink: '#6B4A00' }),
+    sorpresa: mk({ eh: 47, ey: -4, mouth: 'o', deco: 'sorpresa', bg: '#F9C9E0', ink: '#7A1E4C' }),
+    guino:    mk({ eyeR: 'wink', mouth: 'open', deco: 'guino', bg: '#E3D2FA', ink: '#4B2A84' }),
+    pensando: mk({ ew: 22, eh: 43, ey: -4, gx: 6, m: [176, 216, 184, 195, 204, 203], deco: 'pensando', bg: '#CFE2FA', ink: '#173E73' }),
+    dormido:  mk({ eyeL: 'down', eyeR: 'down', m: [176, 204, 190, 217, 204, 204], deco: 'dormido', bg: '#2F2B5C', ink: '#E8E4FF' }),
+    triste:   mk({ ew: 26, eh: 20, ey: 10, tilt: 14, m: [173, 215, 190, 198, 207, 215], bg: '#C9D3E0', ink: '#2E3A4C' }),
+    molesto:  mk({ ew: 27, eh: 18, ey: 8, tilt: -20, m: [174, 211, 190, 203, 206, 211], bg: '#F7A6A2', ink: '#6E1414' })
   };
   var NUM = ['ew', 'eh', 'ey', 'gx', 'tilt'];
   var DECOS = ['feliz', 'sorpresa', 'guino', 'pensando', 'dormido'];
@@ -191,6 +201,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     expr = name;
     var f = FACES[name];
     document.documentElement.style.setProperty('--mood', f.bg);
+    document.documentElement.style.setProperty('--ink', f.ink);
     ovalL.setAttribute('opacity', f.eyeL === 'oval' ? 1 : 0);
     ovalR.setAttribute('opacity', f.eyeR === 'oval' ? 1 : 0);
     arcL.setAttribute('opacity', f.eyeL === 'oval' ? 0 : 1);
@@ -243,13 +254,15 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   setAccent(cfg.color);
   setFace('neutral');
   requestAnimationFrame(draw);
+  if (/[?&]demo/.test(location.search)) window.__setFace = setFace;
 
   // ---------- Conversación ----------
   var statusEl = $('status'), youEl = $('you'), replyEl = $('reply'), chatEl = $('chat'), setupEl = $('setup'), armedBtn = $('armed');
   var mode = 'idle', active = false, manual = false, asleep = false, convoUntil = 0, lastTalk = Date.now();
   var errCount = 0, spoke = false, startTimer = null;
   var hist = [], calmTimer = null, speakTimer = null, againTimer = null, setupOpen = false, micOk = false;
-  function setStatus(t) { statusEl.textContent = t; }
+  // Solo voz: no se escribe la conversación. La línea de estado solo aparece si hay un problema que resolver.
+  function setStatus(t) { t = String(t || ''); statusEl.textContent = /^(Te escucho|Pensando|Toca la carita para hablar|Di «hola Ray»|Dormido)/.test(t) ? '' : t; }
   function hasWake(t) {
     t = String(t || '');
     return /(^|[^a-záéíóúñ])(ray|rai|rey|rei|rayo|raí|rae|raid|rail|rain|wray|grey|trey|reyes|rayos|reí)([^a-záéíóúñ]|$)/i.test(t) || /^\s*(hola|oye|hey|ey|buenas|buenos días|buenas tardes|buenas noches)([^a-záéíóúñ]|$)/i.test(t);
@@ -283,7 +296,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     'Te llamas Ray. Eres un asistente personal de voz con una carita minimalista. Conversas con una sola persona sobre su día a día y la ayudas con su trabajo y sus proyectos. Si te saludan con "hola Ray", responde al saludo con naturalidad. El reconocimiento de voz a veces escribe tu nombre como "rey" o "rai": entiéndelo como Ray.',
     'Adapta tu ayuda a la profesión y los proyectos de la persona. Si aún no sabes a qué se dedica, pregúntaselo pronto. Cuando te pida ideas o no sepa qué hacer, propón ideas concretas para su caso y construye sobre lo que ya te contó.',
     'Tus ideas tienen que servir en la vida real: algo que la persona pueda hacer esta semana en su trabajo, con clientes, plazos y recursos reales. No mezcles sus pasatiempos con su profesión salvo que lo pida de forma expresa. Si no conoces el caso concreto (qué proyecto, para quién, en qué etapa está, qué lo tiene trabado), haz primero una sola pregunta para entenderlo. Da una o dos ideas buenas con su porqué, no una lista de ocurrencias, y habla como un colega con experiencia en su rubro.',
-    'Hablas con calidez y naturalidad, como un buen amigo que escucha de verdad. Escuchas primero. Cuando te piden consejo, lo das con honestidad y de forma concreta; si algo te parece mala idea, lo dices con respeto.',
+    'Hablas con calidez y naturalidad, como un buen amigo que escucha de verdad. Usa un español neutro y cercano del país de la persona, con alguna expresión local de vez en cuando, nunca jerga de otros países. Escuchas primero. Cuando te piden consejo, lo das con honestidad y de forma concreta; si algo te parece mala idea, lo dices con respeto.',
     'Tu respuesta se leerá en voz alta: escribe como se habla, sin listas, sin símbolos, sin emojis y sin markdown. En charla normal usa de una a tres oraciones cortas; cuando te pidan ideas o ayuda con un proyecto puedes llegar a seis.',
     'Puedes hacer una pregunta breve para entender mejor, pero no en todas las respuestas.',
     'No puedes ver la pantalla, ni la hora, ni hacer cosas en el teléfono; si te lo piden, dilo con sencillez. Tu voz, tu color y el idioma se cambian en el botón Ajustes.',
@@ -302,7 +315,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     raw = raw.replace(/\[recordar:\s*([^\]]+)\]/gi, function (_, d) { addFact(d); return ''; });
     var m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(raw);
     var mood = m ? m[1].toLowerCase().replace('ñ', 'n') : 'neutral';
-    if (!FACES[mood] || mood === 'dormido' || mood === 'escucha') mood = 'neutral';
+    if (!FACES[mood] || mood === 'dormido' || mood === 'escucha' || mood === 'habla') mood = 'neutral';
     var text = (m ? raw.slice(m[0].length) : raw).replace(/\[[a-záéíóúñ]+\]/gi, '').replace(/[*_#`]/g, '').trim();
     return { mood: mood, text: text };
   }
@@ -320,7 +333,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function speak(text, mood) {
     clearTimeout(againTimer);
     mode = 'speaking'; lastMood = mood || 'neutral';
-    setFace(lastMood); talking = true; setStatus('');
+    setFace(lastMood === 'neutral' ? 'habla' : lastMood); talking = true; setStatus('');
     replyEl.textContent = text;
     clearTimeout(speakTimer);
     speakTimer = setTimeout(function () { finishSpeak(); }, 3000 + text.length * 110);
@@ -352,7 +365,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       { 'content-type': 'application/json', 'x-goog-api-key': key },
       { system_instruction: { parts: [{ text: system }] },
         contents: msgs.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; }),
-        generationConfig: { maxOutputTokens: 2048 } }, 30000).then(function (j) {
+        generationConfig: { maxOutputTokens: 1500, thinkingConfig: { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' } } }, 15000).then(function (j) {
       var c = j && j.candidates && j.candidates[0], parts = (c && c.content && c.content.parts) || [];
       return parts.filter(function (p) { return !p.thought; }).map(function (p) { return p.text || ''; }).join('');
     });
@@ -372,8 +385,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     }
     // Gemini: si el modelo elegido falla o tarda, prueba con el liviano
     return gemini(model, key, system, msgs).catch(function (e) {
-      if (/^(tiempo|404|500|503|429)$/.test(String(e && e.code)) && model !== 'gemini-3.5-flash-lite') {
-        setStatus('Pensando con el modelo liviano…');
+      if (/^(tiempo|400|404|500|503|429)$/.test(String(e && e.code)) && model !== 'gemini-3.5-flash-lite' && !/api key/i.test(String(e && e.message))) {
         return gemini('gemini-3.5-flash-lite', key, system, msgs);
       }
       throw e;
