@@ -54,9 +54,9 @@ public class RayNative extends Plugin {
 
   // Silenciar el pitido del micrófono: mientras Ray escucha se silencian los sonidos
   // del sistema; vuelven en cuanto Ray habla, se detiene o la app pasa a segundo plano.
-  private final int[] BEEP = { AudioManager.STREAM_MUSIC, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM };
+  private final int[] BEEP = { AudioManager.STREAM_MUSIC, AudioManager.STREAM_SYSTEM };
   private final HashSet<Integer> muted = new HashSet<>();
-  private void muteBeep() {
+  private synchronized void muteBeep() {
     try {
       AudioManager am = (AudioManager) getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
       for (int st : BEEP) {
@@ -64,7 +64,7 @@ public class RayNative extends Plugin {
       }
     } catch (Exception e) { }
   }
-  private void unmuteBeep() {
+  private synchronized void unmuteBeep() {
     try {
       AudioManager am = (AudioManager) getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
       for (Integer st : muted) { try { am.adjustStreamVolume(st, AudioManager.ADJUST_UNMUTE, 0); } catch (Exception e) { } }
@@ -291,7 +291,7 @@ public class RayNative extends Plugin {
     String uid = call.getString("id", "");
     if (uid == null || uid.isEmpty()) uid = "ray" + System.currentTimeMillis();
     if (!ttsReady || text == null || text.isEmpty()) { call.reject("tts_not_ready"); return; }
-    main.post(this::unmuteBeep);
+    unmuteBeep();
     try {
       boolean set = false;
       if (voiceName != null && !voiceName.isEmpty()) {

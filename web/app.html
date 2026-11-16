@@ -120,6 +120,22 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
 (function () {
   var N = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.RayNative) || null;
   var VERSION = '';
+  var LOG_URL = 'https://jwvownzuatsjsmcpzocr.supabase.co/rest/v1/ray_log', LOG_KEY = 'sb_publishable_wDinCENDW2cIEa50TXGavw_PG2PYrwY';
+  var logQ = [], logT = null, DEV = '';
+  try { DEV = localStorage.getItem('ray_dev') || ''; if (!DEV) { DEV = 'd' + Math.random().toString(36).slice(2, 10); localStorage.setItem('ray_dev', DEV); } } catch (e) { DEV = 'sin'; }
+  function rlog(ev, data) {
+    try {
+      logQ.push({ device: DEV, ver: VERSION || '?', ev: String(ev).slice(0, 40), data: data || null });
+      if (logQ.length > 60) logQ.shift();
+      if (!logT) logT = setTimeout(function () { logT = null; sendLog(); }, 2500);
+    } catch (e) {}
+  }
+  function sendLog() {
+    if (!logQ.length) return;
+    var batch = logQ.splice(0, 40);
+    try { fetch(LOG_URL, { method: 'POST', headers: { 'content-type': 'application/json', apikey: LOG_KEY, authorization: 'Bearer ' + LOG_KEY, prefer: 'return=minimal' }, body: JSON.stringify(batch) }).catch(function () {}); } catch (e) {}
+  }
+  window.addEventListener('error', function (e) { rlog('js_error', { m: String(e.message).slice(0, 200), l: e.lineno }); });
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
@@ -279,6 +295,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     if (!N || mode !== 'idle' || !cfg.done || setupOpen || !micOk || document.hidden) return;
     mode = 'listening';
     active = manual || Date.now() < convoUntil;
+    rlog('listen', { active: active });
     if (active) { asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
     else { setFace(asleep ? 'dormido' : 'neutral'); setStatus(asleep ? 'Dormido. Di «hola Ray» para despertarme' : 'Di «hola Ray» o toca la carita'); }
     N.listen({ lang: cfg.lang || 'es-PE' }).catch(function (e) {
@@ -350,7 +367,8 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     }
     clearTimeout(startTimer);
     startTimer = setTimeout(function () { plain('Mi voz elegida no sonó; uso la del sistema. Sube el volumen multimedia o cambia la voz en Ajustes.'); }, 3000);
-    N.speak(payload).catch(function () { clearTimeout(startTimer); plain('Mi voz elegida falló; uso la del sistema.'); });
+    rlog('speak', { n: text.length });
+    N.speak(payload).catch(function (e) { rlog('speak_err', { m: String(e && e.message).slice(0, 120) }); clearTimeout(startTimer); plain('Mi voz elegida falló; uso la del sistema.'); });
   }
   // ---------- Cerebro (directo desde la app, con tiempo límite) ----------
   function post(url, headers, body, ms) {
@@ -441,7 +459,9 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     stream.chars += text.length;
     clearTimeout(speakTimer);
     speakTimer = setTimeout(function () { stream = null; finishSpeak(); }, 5000 + stream.chars * 110);
-    N.speak({ text: text, voice: cfg.voice || '', lang: cfg.lang || 'es-PE', rate: Number(cfg.rate) || 1, pitch: Number(cfg.pitch) || 1, queue: !first, id: id }).catch(function () {
+    rlog('speak_part', { n: text.length, first: !!first });
+    N.speak({ text: text, voice: cfg.voice || '', lang: cfg.lang || 'es-PE', rate: Number(cfg.rate) || 1, pitch: Number(cfg.pitch) || 1, queue: !first, id: id }).catch(function (e) {
+      rlog('speak_err', { m: String(e && e.message).slice(0, 120) });
       if (!stream) return; delete stream.ids[id]; stream.pending--;
       if (stream.done && stream.pending <= 0) { stream = null; finishSpeak(); }
     });
@@ -494,6 +514,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     if (!cfg.key) { speak('Me falta la clave del cerebro para poder pensar. Toca Ajustes y pégala.', 'triste'); return; }
     hist.push({ role: 'user', content: text });
     mode = 'thinking';
+    var t0 = Date.now(); rlog('ask', { n: text.length, prov: cfg.provider, model: cfg.model, stream: canStream() });
     setFace('pensando'); setStatus('Pensando…'); replyEl.textContent = '';
     var prov = cfg.provider || 'gemini', model = cfg.model || MODELS[prov];
     var job = (prov === 'gemini' && canStream() && window.ReadableStream)
@@ -504,6 +525,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
         }).then(function (p) { if (p && p.text) hist.push({ role: 'assistant', content: p.text }); return null; })
       : brain(prov, cfg.key, model, systemPrompt(), messages());
     job.then(function (txt) {
+      rlog('brain_ok', { ms: Date.now() - t0, streamed: txt === null });
       if (txt === null) return;
       var p = parse(txt);
       if (!p.text) p.text = 'Me quedé en blanco. ¿Me lo repites?';
@@ -512,6 +534,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     }, function (err) {
       hist.pop();
       var code = String((err && err.code) || ''), msg = String((err && err.message) || '');
+      rlog('brain_err', { ms: Date.now() - t0, code: code, msg: msg.slice(0, 160) });
       var t = 'No pude responder esta vez. Inténtalo de nuevo.';
       if (code === '401' || code === '403' || (code === '400' && /api key/i.test(msg))) t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
       else if (code === 'red') t = 'No tengo internet ahora. Revisa tu conexión.';
@@ -531,18 +554,20 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (mode !== 'listening') return;
       var t = (d && d.text) || '';
       if (!t) return;
-      if (!active && hasWake(t)) { active = true; asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
+      if (!active && hasWake(t)) { rlog('wake', { n: t.length }); active = true; asleep = false; setFace('escucha'); setStatus('Te escucho…'); }
       youEl.textContent = (active ? 'Tú: ' : 'Oí: ') + t;
       clearTimeout(earlyTimer);
       if (active) earlyTimer = setTimeout(function () {
         if (mode !== 'listening' || !active) return;
         mode = 'idle';
+        rlog('early', { n: t.length });
         try { N.stopListen(); } catch (e) {}
         ask(t);
       }, 1100);
     });
     N.addListener('listenFinal', function (d) {
       clearTimeout(earlyTimer);
+      rlog('final', { mode: mode, n: String((d && d.text) || '').length, active: active });
       if (mode !== 'listening') return;
       mode = 'idle';
       var t = String((d && d.text) || '').trim();
@@ -554,13 +579,15 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (mode !== 'listening') return;
       mode = 'idle'; manual = false;
       var c = d && d.code;
+      rlog('listen_err', { c: c });
       if (c === 9) { try { N.stopListen(); } catch (e) {} micOk = false; setFace('triste'); setStatus('Necesito permiso para usar el micrófono. Toca la carita.'); return; }
       if (c === 6 || c === 7) errCount = 0; else errCount++;
       again(c === 8 ? 600 : (c === 2 || c === 1 || c === 4) ? Math.min(8000, 1500 * errCount) : 150);
     });
-    N.addListener('speakStart', function () { spoke = true; clearTimeout(startTimer); });
+    N.addListener('speakStart', function (d) { spoke = true; clearTimeout(startTimer); rlog('speak_start', { id: d && d.id }); });
     N.addListener('speakEnd', function (d) {
       var id = d && d.id;
+      rlog('speak_end', { id: id, stream: !!stream });
       if (stream && id && stream.ids[id]) {
         delete stream.ids[id]; stream.pending--;
         if (stream.done && stream.pending <= 0) { stream = null; finishSpeak(); }
@@ -593,6 +620,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     if (cfg.done && !setupOpen && !asleep && mode === 'listening' && !active && Date.now() - lastTalk > 180000) { asleep = true; setFace('dormido'); setStatus('Dormido. Di «hola Ray» para despertarme'); }
   }, 5000);
   document.addEventListener('visibilitychange', function () {
+    if (document.hidden) sendLog();
     if (document.hidden) stopAll();
     else if (cfg.done && !setupOpen) { mode = 'idle'; startListen(); }
   });
@@ -769,6 +797,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   if (N) {
     N.info().then(function (inf) {
       VERSION = (inf && inf.version) || '';
+      rlog('start', { tts: inf && inf.ttsReady, rec: inf && inf.recognizer, armed: cfg.armed, prov: cfg.provider, model: cfg.model, voice: !!cfg.voice, lang: cfg.lang, key: !!((cfg.keys && cfg.keys[cfg.provider]) || cfg.key) });
       return fetch('https://api.github.com/repos/riuk1126/ray/releases/latest').then(function (r) { return r.json(); }).then(function (rel) {
         var tag = String((rel && rel.tag_name) || '').replace(/^v/, '');
         var asset = ((rel && rel.assets) || []).filter(function (a) { return /\.apk$/i.test(a.name); })[0];
