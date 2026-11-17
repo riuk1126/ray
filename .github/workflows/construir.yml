@@ -36,6 +36,7 @@ jobs:
           cp -r res/* android/app/src/main/res/
           MF=android/app/src/main/AndroidManifest.xml
           grep -q RECORD_AUDIO $MF || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <queries>\n        <intent><action android:name="android.speech.RecognitionService" /></intent>\n        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>\n    </queries>\n</manifest>#' $MF
+          grep -q 'permission.CAMERA' $MF || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' $MF
           grep -q REQUEST_INSTALL_PACKAGES $MF || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n</manifest>#' $MF
           # Icono: los dos ojos de Ray sobre blanco
           sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || true

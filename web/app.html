@@ -29,6 +29,7 @@
 html, body { height: 100%; margin: 0; }
 body { background: var(--mood); color: var(--ink); font-family: var(--font); font-size: 16px; line-height: 1.5; transition: background-color 0.6s ease, color 0.6s ease; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
 main { width: 100%; max-width: 640px; height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 28px 20px 20px; }
+#cam { position: fixed; top: 14px; right: 14px; width: 104px; height: 138px; object-fit: cover; border-radius: 18px; border: 3px solid var(--accent); background: #000; z-index: 5; }
 .face-wrap { flex: 1 1 0; min-height: 120px; display: flex; align-items: center; justify-content: center; }
 .face-wrap svg { width: 100%; max-width: 520px; max-height: 100%; display: block; }
 .fade { transition: opacity 0.2s ease; }
@@ -70,6 +71,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
 </head>
 <body>
 <main>
+  <video id="cam" playsinline muted autoplay hidden></video>
   <div class="face-wrap" id="faceWrap">
     <svg viewBox="0 0 380 270" role="img" aria-label="Cara de Ray">
       <g id="face">
@@ -140,8 +142,8 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   // ---------- Ajustes guardados en el equipo ----------
-  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'gemini', model: 'gemini-3.5-flash-lite', keys: {}, armed: true, rate: 1, pitch: 1 };
-  var cfg = {}, facts = [];
+  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'ray', model: 'gemini-3.5-flash-lite', keys: {}, armed: true, rate: 1, pitch: 1, srvV1: false };
+  var cfg = {}, facts = [], agenda = [];
   (function () {
     var k, s = null;
     try { s = JSON.parse(localStorage.getItem('ray_cfg') || 'null'); } catch (e) {}
@@ -151,8 +153,11 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     if (cfg.provider === 'gemini' && cfg.model === 'gemini-3.5-flash' && !cfg.speedV2) { cfg.model = 'gemini-3.5-flash-lite'; cfg.speedV2 = true; }
     if (!cfg.keys || typeof cfg.keys !== 'object') cfg.keys = {};
     if (cfg.key && !cfg.keys[cfg.provider]) cfg.keys[cfg.provider] = cfg.key;
+    // Desde 1.4: por defecto Ray piensa con su propio servidor (sin clave). La clave de Gemini guardada queda de respaldo.
+    if (!cfg.srvV1) { if (cfg.provider === 'gemini') { cfg.provider = 'ray'; cfg.model = DEF.model; } cfg.srvV1 = true; }
     try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {}
     try { var f = JSON.parse(localStorage.getItem('ray_facts') || '[]'); if (Array.isArray(f)) facts = f; } catch (e) {}
+    try { var a = JSON.parse(localStorage.getItem('ray_agenda') || '[]'); if (Array.isArray(a)) agenda = a; } catch (e) {}
   })();
   function save() { try { localStorage.setItem('ray_cfg', JSON.stringify(cfg)); } catch (e) {} }
   function addFact(d) {
@@ -161,6 +166,43 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     facts.push(d);
     if (facts.length > 60) facts.shift();
     try { localStorage.setItem('ray_facts', JSON.stringify(facts)); } catch (e) {}
+  }
+
+  // ---------- Agenda y recordatorios ----------
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function stamp(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function whenOf(s) {
+    var m = /(\d{4})-(\d{1,2})-(\d{1,2})[ T]+(\d{1,2}):(\d{2})/.exec(String(s || ''));
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+  }
+  function saveAgenda() {
+    var lim = Date.now() - 2 * 86400000;
+    agenda = agenda.filter(function (a) { var w = whenOf(a.at); return w && (!a.done || w.getTime() > lim); });
+    agenda.sort(function (a, b) { return whenOf(a.at) - whenOf(b.at); });
+    if (agenda.length > 80) agenda = agenda.slice(-80);
+    try { localStorage.setItem('ray_agenda', JSON.stringify(agenda)); } catch (e) {}
+  }
+  function addAgenda(s) {
+    var p = String(s || '').split('|'), w = whenOf(p[0]), text = p.slice(1).join('|').trim().slice(0, 200);
+    if (!w || !text) return;
+    var at = stamp(w);
+    if (agenda.some(function (a) { return a.at === at && a.text === text; })) return;
+    agenda.push({ at: at, text: text, done: w.getTime() <= Date.now() - 60000 });
+    saveAgenda(); rlog('agenda_add', { at: at });
+  }
+  function dropAgenda(s) {
+    var q = String(s || '').toLowerCase().trim();
+    if (!q) return;
+    var before = agenda.length;
+    agenda = agenda.filter(function (a) { return !(a.text.toLowerCase().indexOf(q) >= 0 || q.indexOf(a.text.toLowerCase()) >= 0 || a.at === q); });
+    if (agenda.length !== before) saveAgenda();
+  }
+  function agendaText() {
+    var now = Date.now(), up = agenda.filter(function (a) { var w = whenOf(a.at); return w && !a.done && w.getTime() > now - 60000; });
+    var past = agenda.filter(function (a) { return a.done; }).slice(-5);
+    var out = up.slice(0, 25).map(function (a) { return '- ' + a.at + ' | ' + a.text; });
+    if (past.length) out.push('Ya avisados hace poco: ' + past.map(function (a) { return a.at + ' ' + a.text; }).join('; '));
+    return out.join('\n') || 'Nada agendado.';
   }
 
   var COUNTRIES = [
@@ -173,7 +215,8 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     ['PT', 'Portugal', 'pt-PT'], ['GB', 'Reino Unido', 'en-GB'], ['RU', 'Rusia', 'ru-RU'], ['OT', 'Otro país', '']
   ];
   var COLORS = ['#FF7A45', '#FFC233', '#3DBE7B', '#18B8A6', '#38A9F0', '#3D6BF0', '#FF5FA2', '#E5484D', '#8A5A3C', '#7A8794', '#F2A900', '#00A86B'];
-  var MODELS = { gemini: 'gemini-3.5-flash-lite', openai: 'chat-latest', claude: 'claude-haiku-5-5' };
+  var MODELS = { ray: 'gemini-3.5-flash-lite', gemini: 'gemini-3.5-flash-lite', openai: 'chat-latest', claude: 'claude-haiku-5-5' };
+  var SRV = 'https://jwvownzuatsjsmcpzocr.supabase.co/functions/v1/ray-cerebro';
   var SAMPLE = { es: 'Hola, soy Ray. Así sueno con esta voz.', en: 'Hi, I am Ray. This is how I sound with this voice.', pt: 'Olá, eu sou o Ray. É assim que eu falo com esta voz.', fr: 'Bonjour, je suis Ray. Voici ma voix.', it: 'Ciao, sono Ray. Questa è la mia voce.', de: 'Hallo, ich bin Ray. So klinge ich mit dieser Stimme.' };
   function countryName(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][1]; return ''; }
   function countryLocale(c) { for (var i = 0; i < COUNTRIES.length; i++) if (COUNTRIES[i][0] === c) return COUNTRIES[i][2]; return ''; }
@@ -326,7 +369,10 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     'Hablas con calidez y naturalidad, como un buen amigo que escucha de verdad. Usa un español neutro y cercano del país de la persona, con alguna expresión local de vez en cuando, nunca jerga de otros países. Escuchas primero. Cuando te piden consejo, lo das con honestidad y de forma concreta; si algo te parece mala idea, lo dices con respeto.',
     'Tu respuesta se leerá en voz alta: escribe como se habla, sin listas, sin símbolos, sin emojis y sin markdown. En charla normal usa de una a tres oraciones cortas; cuando te pidan ideas o ayuda con un proyecto puedes llegar a seis.',
     'Puedes hacer una pregunta breve para entender mejor, pero no en todas las respuestas.',
-    'No puedes ver la pantalla, ni la hora, ni hacer cosas en el teléfono; si te lo piden, dilo con sencillez. Tu voz, tu color y el idioma se cambian en el botón Ajustes.',
+    'Sabes la fecha y la hora exactas: vienen abajo en "Ahora es". Úsalas cuando te pregunten la hora o el día, y para calcular plazos. Dilas como se habla, por ejemplo "son las nueve y cuarto de la noche".',
+    'Agenda: puedes organizarle el día. Cuando la persona te pida recordarle algo, agendar una cita o una tarea con hora, calcula la fecha y hora exactas a partir de "Ahora es" (por ejemplo "en media hora" o "mañana a las 8"), confírmalo en voz alta en una frase y añade al final una línea aparte con el formato [agendar: AAAA-MM-DD HH:MM | qué hay que hacer]. Si no dice la hora, pregúntala antes de agendar. Para borrar algo usa [quitar: parte del texto]. Cuando te pregunten qué tiene hoy o mañana, léelo de "Su agenda" en orden y de forma natural, y si te piden ayuda para organizarse propón un orden realista con sus horarios. Esas líneas no se leen en voz alta. Avisas a la hora justa mientras la app esté abierta.',
+    'Cámara: si el mensaje trae una imagen, es lo que la cámara del teléfono ve en este momento. Úsala para responder: di lo que ves que importa para su pregunta, da consejos concretos sobre lo que está haciendo y no describas todo. Si no hay imagen y te piden que mires algo, dile que diga "abre la cámara". No inventes lo que no se ve con claridad.',
+    'No puedes hacer cosas dentro de otras apps del teléfono; si te lo piden, dilo con sencillez. Tu voz, tu color y el idioma se cambian en el botón Ajustes.',
     'Memoria: cuando la persona te cuente algo duradero sobre sí misma (su nombre, profesión, proyectos, canales, gustos, un personaje que está creando), añade al final de tu respuesta una línea aparte con el formato [recordar: el dato en una frase corta]. Esa línea no se lee en voz alta. No guardes lo pasajero ni repitas datos que ya sabes.',
     'Formato obligatorio: empieza con una sola etiqueta entre corchetes que indique tu emoción, elegida entre [neutral], [feliz], [guiño], [sorpresa], [triste], [molesto] y [pensando]. Usa [guiño] para bromas o complicidad, y [molesto] y [triste] solo cuando de verdad corresponda. Después de la etiqueta escribe tu respuesta.'
   ].join('\n');
@@ -334,12 +380,18 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     var who = [];
     if (cfg.name) who.push('Se llama ' + cfg.name + '.');
     if (cfg.country && cfg.country !== 'OT') who.push('Vive en ' + countryName(cfg.country) + '.');
+    var now = new Date(), nice = '';
+    try { nice = now.toLocaleString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }); } catch (e) { nice = now.toString(); }
     return RULES + '\n\nIdioma: responde siempre en el idioma de la etiqueta ' + (cfg.lang || 'es-PE') + ', con las expresiones naturales de ese país, sin exagerar la jerga.' +
+      '\n\nAhora es: ' + nice + ' (' + stamp(now) + ', hora del teléfono).' +
+      '\n\nSu agenda:\n' + agendaText() +
       '\n\nLo que ya sabes de la persona:\n' + (who.concat(facts).join('\n') || 'Todavía nada.');
   }
   function parse(raw) {
     raw = String(raw || '');
     raw = raw.replace(/\[recordar:\s*([^\]]+)\]/gi, function (_, d) { addFact(d); return ''; });
+    raw = raw.replace(/\[agendar:\s*([^\]]+)\]/gi, function (_, d) { addAgenda(d); return ''; });
+    raw = raw.replace(/\[quitar:\s*([^\]]+)\]/gi, function (_, d) { dropAgenda(d); return ''; });
     var m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(raw);
     var mood = m ? m[1].toLowerCase().replace('ñ', 'n') : 'neutral';
     if (!FACES[mood] || mood === 'dormido' || mood === 'escucha' || mood === 'habla') mood = 'neutral';
@@ -389,16 +441,24 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       });
     }, function (e) { clearTimeout(t); throw { code: (e && e.name === 'AbortError') ? 'tiempo' : 'red', message: String((e && e.message) || e) }; });
   }
+  // key === '' significa: usar el servidor de Ray (sin clave en el teléfono)
+  function gemReq(model, key, system, msgs, streamIt) {
+    if (!key) return { url: SRV + (streamIt ? '?stream=1' : ''), headers: { 'content-type': 'application/json', apikey: LOG_KEY, authorization: 'Bearer ' + LOG_KEY }, body: { model: model, system: system, messages: msgs } };
+    return { url: 'https://generativelanguage.googleapis.com/v1beta/models/' + model + (streamIt ? ':streamGenerateContent?alt=sse' : ':generateContent'),
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      body: { system_instruction: { parts: [{ text: system }] },
+        contents: msgs.map(function (m) { var p = []; if (m.img) p.push({ inline_data: { mime_type: 'image/jpeg', data: m.img } }); p.push({ text: m.content }); return { role: m.role === 'assistant' ? 'model' : 'user', parts: p }; }),
+        generationConfig: { maxOutputTokens: 1200, thinkingConfig: { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' } } } };
+  }
   function gemini(model, key, system, msgs) {
-    return post('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
-      { 'content-type': 'application/json', 'x-goog-api-key': key },
-      { system_instruction: { parts: [{ text: system }] },
-        contents: msgs.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; }),
-        generationConfig: { maxOutputTokens: 1200, thinkingConfig: { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' } } }, 12000).then(function (j) {
+    var q = gemReq(model, key, system, msgs, false);
+    return post(q.url, q.headers, q.body, 15000).then(function (j) {
+      if (j && typeof j.text === 'string') return j.text;
       var c = j && j.candidates && j.candidates[0], parts = (c && c.content && c.content.parts) || [];
       return parts.filter(function (p) { return !p.thought; }).map(function (p) { return p.text || ''; }).join('');
     });
   }
+  function noSrvKey(e) { return String(e && e.code) === '503' && /falta configurar/i.test(String(e && e.message)); }
   function brain(prov, key, model, system, msgs) {
     if (prov === 'openai') {
       return post('https://api.openai.com/v1/chat/completions', { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
@@ -412,8 +472,9 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
         return ((j && j.content) || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('');
       });
     }
-    // Gemini: si el modelo elegido falla o tarda, prueba con el liviano
+    // Gemini (directo o por el servidor de Ray): si el modelo elegido falla o tarda, prueba con el liviano
     return gemini(model, key, system, msgs).catch(function (e) {
+      if (!key && noSrvKey(e) && cfg.keys && cfg.keys.gemini) return gemini(model, cfg.keys.gemini, system, msgs);
       var alt = model === 'gemini-3.5-flash-lite' ? 'gemini-3.5-flash' : 'gemini-3.5-flash-lite';
       if (/^(tiempo|400|404|500|503|429)$/.test(String(e && e.code)) && !/api key/i.test(String(e && e.message))) {
         return gemini(alt, key, system, msgs);
@@ -423,14 +484,9 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   }
   function canStream() { return !!VERSION && !newer('1.2.0', VERSION); }
   function streamGemini(model, key, system, msgs, onText) {
-    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 12000);
-    return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':streamGenerateContent?alt=sse', {
-      method: 'POST', signal: ac.signal,
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({ system_instruction: { parts: [{ text: system }] },
-        contents: msgs.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; }),
-        generationConfig: { maxOutputTokens: 1200, thinkingConfig: { thinkingLevel: /lite/.test(model) ? 'minimal' : 'low' } } })
-    }).then(function (r) {
+    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 15000);
+    var q = gemReq(model, key, system, msgs, true);
+    return fetch(q.url, { method: 'POST', signal: ac.signal, headers: q.headers, body: JSON.stringify(q.body) }).then(function (r) {
       if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { clearTimeout(t); var e = (j && j.error) || {}; throw { code: String(r.status), message: String(e.message || ('HTTP ' + r.status)) }; });
       var rd = r.body.getReader(), dec = new TextDecoder(), lb = '', full = '';
       function pump() {
@@ -474,14 +530,14 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (stream.done && stream.pending <= 0) { stream = null; finishSpeak(); }
     });
   }
-  function askStream(model) {
+  function askStream(model, key, msgs) {
     var st = stream = { ids: {}, pending: 0, done: false, said: 0, mood: null, started: false, chars: 0 };
     function body(full) {
       var m = /^\s*\[([a-záéíóúñ]+)\]\s*/i.exec(full);
       if (m) { if (!st.mood) { var md = m[1].toLowerCase().replace('ñ', 'n'); st.mood = (FACES[md] && !/dormido|escucha|habla/.test(md)) ? md : 'neutral'; } full = full.slice(m[0].length); }
       else if (/^\s*[^\[\s]/.test(full) || full.length > 14) { if (!st.mood) st.mood = 'neutral'; }
       else return null;
-      var k = full.search(/\[recordar/i); if (k >= 0) full = full.slice(0, k);
+      var k = full.search(/\[(recordar|agendar|quitar)/i); if (k >= 0) full = full.slice(0, k);
       return full.replace(/\[[a-záéíóúñ]+\]/gi, '');
     }
     function flush(full, end) {
@@ -492,7 +548,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (end) cut = rest.length;
       if (cut > 0) { var part = rest.slice(0, cut); st.said += cut; if (part.trim()) { sayPart(part, !st.started); st.started = true; } }
     }
-    return streamGemini(model, cfg.key, systemPrompt(), messages(), function (full) { flush(full, false); }).then(function (full) {
+    return streamGemini(model, key, systemPrompt(), msgs, function (full) { flush(full, false); }).then(function (full) {
       flush(full, true);
       var p = parse(full);
       if (stream === st) {
@@ -512,26 +568,86 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     while (h.length && h[0].role !== 'user') h.shift();
     return h;
   }
+  // ---------- Cámara: Ray ve lo que estás haciendo ----------
+  var camEl = $('cam'), camStream = null, camFacing = 'environment', camCanvas = document.createElement('canvas');
+  function camOn() { return !!camStream; }
+  function camStop() {
+    if (camStream) { try { camStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} }
+    camStream = null; camEl.srcObject = null; camEl.hidden = true;
+  }
+  function camStart(facing) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject({ name: 'sin_soporte' });
+    camStop(); camFacing = facing || 'environment';
+    return navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: camFacing }, width: { ideal: 1280 }, height: { ideal: 720 } } }).then(function (st) {
+      camStream = st; camEl.srcObject = st; camEl.hidden = false;
+      camEl.style.transform = camFacing === 'user' ? 'scaleX(-1)' : '';
+      try { camEl.play(); } catch (e) {}
+      rlog('cam_on', { f: camFacing });
+      return new Promise(function (res) { if (camEl.readyState >= 2) res(); else { camEl.onloadeddata = function () { res(); }; setTimeout(res, 1500); } });
+    });
+  }
+  function camFrame() {
+    var w = camEl.videoWidth, h = camEl.videoHeight;
+    if (!camStream || !w || !h) return '';
+    var sc = Math.min(1, 768 / Math.max(w, h));
+    camCanvas.width = Math.round(w * sc); camCanvas.height = Math.round(h * sc);
+    try {
+      camCanvas.getContext('2d').drawImage(camEl, 0, 0, camCanvas.width, camCanvas.height);
+      return camCanvas.toDataURL('image/jpeg', 0.6).split(',')[1] || '';
+    } catch (e) { return ''; }
+  }
+
+  var CAM_ON = /(abr[eíi]|prend[eé]|enciend[eé]|activ[aá]|us[aá]|pon)\w*\s+(la\s+|tu\s+)?c[aá]mara|m[ií]rame|mira\s+lo\s+que\s+(estoy|hago|tengo)|qu[eé]\s+(es\s+lo\s+que\s+)?ves/i;
+  var CAM_OFF = /(cierr|apag|desactiv|quit)\w*\s+(la\s+|tu\s+)?c[aá]mara|ya no (me )?mires|deja de mirar/i;
+  var CAM_FLIP = /c[aá]mara\s+(frontal|de\s+adelante|delantera|de\s+atr[aá]s|trasera)|(voltea|cambia|gira)\w*\s+(la\s+)?c[aá]mara/i;
   function ask(text) {
     text = String(text || '').trim();
-    if (!text || mode === 'thinking') return;
+    if (!text || mode === 'thinking' || mode === 'opening') return;
     clearTimeout(calmTimer); clearTimeout(againTimer);
     asleep = false; manual = false; lastTalk = Date.now();
     youEl.textContent = 'Tú: ' + text;
-    cfg.key = (cfg.keys && cfg.keys[cfg.provider]) || cfg.key || '';
-    if (!cfg.key) { speak('Me falta la clave del cerebro para poder pensar. Toca Ajustes y pégala.', 'triste'); return; }
+    // Órdenes de cámara: se resuelven aquí mismo, sin esperar al cerebro
+    if (CAM_OFF.test(text)) { if (camOn()) { camStop(); speak('Listo, cerré la cámara.', 'neutral'); } else speak('La cámara ya está cerrada.', 'neutral'); return; }
+    if (CAM_FLIP.test(text) || (!camOn() && CAM_ON.test(text))) {
+      var front = /frontal|adelante|delantera/i.test(text) || (CAM_FLIP.test(text) && !/atr[aá]s|trasera/i.test(text) && camFacing === 'environment');
+      mode = 'opening'; setFace('sorpresa');
+      camStart(front ? 'user' : 'environment').then(function () {
+        mode = 'idle';
+        var bare = /^\W*(hola\s+)?(ray|rey|rai)?\W*(abre|prende|enciende|activa|usa|pon|voltea|cambia|gira)\w*\s+(la\s+|tu\s+)?c[aá]mara(\s+\w+){0,2}\W*$/i.test(text);
+        setTimeout(function () { ask(bare ? 'Acabo de abrir tu cámara. Mira la imagen y dime en una frase qué ves, y pregúntame en qué me ayudas.' : text); }, 700);
+      }, function (e) {
+        mode = 'idle';
+        rlog('cam_err', { m: String(e && (e.name || e.message)).slice(0, 80) });
+        speak(updUrl ? 'Para ver con la cámara necesito la versión nueva de Ray. Toca el botón Actualizar y listo.' : 'No pude abrir la cámara. Revisa que Ray tenga permiso de cámara en los ajustes del teléfono.', 'triste');
+      });
+      return;
+    }
+    var prov = cfg.provider || 'ray', model = cfg.model || MODELS[prov];
+    if (prov === 'ray' && !/^gemini-/.test(model)) model = MODELS.ray;
+    var key = prov === 'ray' ? '' : ((cfg.keys && cfg.keys[prov]) || '');
+    if (prov !== 'ray' && !key) { speak('Me falta la clave de ese cerebro. En Ajustes elige «Ray, sin clave» y listo.', 'triste'); return; }
     hist.push({ role: 'user', content: text });
+    var msgs = messages().map(function (m) { return { role: m.role, content: m.content }; });
+    var shot = camOn() ? camFrame() : '';
+    if (shot && msgs.length) msgs[msgs.length - 1].img = shot;
     mode = 'thinking';
-    var t0 = Date.now(); rlog('ask', { n: text.length, prov: cfg.provider, model: cfg.model, stream: canStream() });
+    var t0 = Date.now(); rlog('ask', { n: text.length, prov: prov, model: model, stream: canStream(), img: !!shot });
     setFace('pensando'); setStatus('Pensando…'); replyEl.textContent = '';
-    var prov = cfg.provider || 'gemini', model = cfg.model || MODELS[prov];
-    var job = (prov === 'gemini' && canStream() && window.ReadableStream)
-      ? askStream(model).catch(function (e) {
+    var gem = prov === 'ray' || prov === 'gemini';
+    function tryStream(m, k) {
+      return askStream(m, k, msgs).catch(function (e) {
+        // Servidor sin clave todavía: usa la clave de Gemini guardada en el teléfono
+        if (!k && noSrvKey(e) && cfg.keys && cfg.keys.gemini) { rlog('srv_sin_clave', {}); return askStream(m, cfg.keys.gemini, msgs); }
+        throw e;
+      });
+    }
+    var job = (gem && canStream() && window.ReadableStream)
+      ? tryStream(model, key).catch(function (e) {
           var alt = model === 'gemini-3.5-flash-lite' ? 'gemini-3.5-flash' : 'gemini-3.5-flash-lite';
-          if (/^(tiempo|400|404|500|503|429)$/.test(String(e && e.code)) && !/api key/i.test(String(e && e.message))) return askStream(alt);
+          if (/^(tiempo|400|404|500|503|429)$/.test(String(e && e.code)) && !/api key/i.test(String(e && e.message)) && !noSrvKey(e)) return tryStream(alt, key);
           throw e;
         }).then(function (p) { if (p && p.text) hist.push({ role: 'assistant', content: p.text }); return null; })
-      : brain(prov, cfg.key, model, systemPrompt(), messages());
+      : brain(gem ? 'gemini' : prov, key, model, systemPrompt(), msgs);
     job.then(function (txt) {
       rlog('brain_ok', { ms: Date.now() - t0, streamed: txt === null });
       if (txt === null) return;
@@ -544,12 +660,13 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       var code = String((err && err.code) || ''), msg = String((err && err.message) || '');
       rlog('brain_err', { ms: Date.now() - t0, code: code, msg: msg.slice(0, 160) });
       var t = 'No pude responder esta vez. Inténtalo de nuevo.';
-      if (code === '401' || code === '403' || (code === '400' && /api key/i.test(msg))) t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
+      if (noSrvKey(err)) t = 'Todavía no tengo cerebro en el servidor. Pídele a Claude que me lo active, o pega una clave de Gemini en Ajustes.';
+      else if (code === '401' || code === '403' || (code === '400' && /api key/i.test(msg))) t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
       else if (code === 'red') t = 'No tengo internet ahora. Revisa tu conexión.';
       else if (code === 'tiempo') t = 'El cerebro tardó demasiado en responder. Inténtalo otra vez.';
       else if (code === '404') t = 'El modelo configurado no existe. Revísalo en Ajustes.';
-      else if (code === '429' && /quota|billing|insufficient/i.test(msg) && cfg.provider !== 'gemini') t = 'Esa cuenta no tiene saldo. Recárgala para seguir.';
-      else if (code === '429') t = cfg.provider !== 'gemini' ? 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.' : 'Llegamos al límite gratuito por ahora. Espera un rato y seguimos.';
+      else if (code === '429' && /quota|billing|insufficient/i.test(msg) && !gem) t = 'Esa cuenta no tiene saldo. Recárgala para seguir.';
+      else if (code === '429') t = !gem ? 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.' : 'Llegamos al límite gratuito por ahora. Espera un rato y seguimos.';
       else if (code === '529' || code === '503') t = 'El cerebro está saturado. Espera un momento y vuelve a intentarlo.';
       else if (code === '400' && /credit|balance/i.test(msg)) t = 'La cuenta del cerebro no tiene saldo. Recárgala para seguir.';
       speak(t, 'triste');
@@ -631,9 +748,30 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   setInterval(function () {
     if (cfg.done && !setupOpen && !asleep && mode === 'listening' && !active && Date.now() - lastTalk > 180000) { asleep = true; setFace('dormido'); setStatus('Dormido. Di «hola Ray» para despertarme'); }
   }, 5000);
+  camEl.addEventListener('click', function () { camStop(); });
+  // Recordatorios: a la hora justa Ray te avisa en voz alta (con la app abierta)
+  setInterval(function () {
+    if (!cfg.done || setupOpen || document.hidden || !N) return;
+    var now = Date.now(), due = [], changed = false;
+    agenda.forEach(function (a) {
+      var w = whenOf(a.at); if (!w || a.done) return;
+      if (w.getTime() <= now - 2 * 3600000) { a.done = true; changed = true; }
+      else if (w.getTime() <= now) due.push(a);
+    });
+    if (due.length && (mode === 'idle' || (mode === 'listening' && !heardAt))) {
+      due.forEach(function (a) { a.done = true; });
+      changed = true;
+      clearTimeout(earlyTimer); clearTimeout(watchT);
+      if (mode === 'listening') { try { N.stopListen(); } catch (e) {} mode = 'idle'; }
+      var said = due.map(function (a) { return a.text; }).join('. También: ');
+      rlog('aviso', { n: due.length });
+      speak((cfg.name ? cfg.name + ', ' : '') + 'te recuerdo: ' + said + '.', 'sorpresa');
+    }
+    if (changed) saveAgenda();
+  }, 15000);
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) sendLog();
-    if (document.hidden) stopAll();
+    if (document.hidden) { stopAll(); camStop(); }
     else if (cfg.done && !setupOpen) { mode = 'idle'; startListen(); }
   });
 
@@ -706,13 +844,13 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
         '<label class="f" for="sHue">Otro color<input type="range" id="sHue" min="0" max="359" step="1" value="20"></label>' +
         '<div class="row"><button class="btn" data-face="feliz" type="button">Alegre</button><button class="btn" data-face="sorpresa" type="button">Sorpresa</button><button class="btn" data-face="guino" type="button">Guiño</button></div>';
     } else {
-      var HELP = { gemini: 'Gratis con límite diario. La clave sale de tu cuenta de Google en aistudio.google.com/api-keys.', openai: 'De pago por uso, aparte de ChatGPT Plus. La clave sale de platform.openai.com/api-keys.', claude: 'De pago por uso. La clave sale de platform.claude.com, en «API keys».' };
-      var pv = draft.provider || 'gemini';
-      h = '<h2>Mi cerebro</h2><p>Elige con qué pienso y pega su clave una sola vez. Queda guardada solo en este equipo.</p>' +
-        '<label class="f" for="sProv">Cerebro<select id="sProv"><option value="gemini"' + (pv === 'gemini' ? ' selected' : '') + '>Gemini de Google</option><option value="openai"' + (pv === 'openai' ? ' selected' : '') + '>ChatGPT de OpenAI</option><option value="claude"' + (pv === 'claude' ? ' selected' : '') + '>Claude de Anthropic</option></select></label>' +
+      var HELP = { ray: 'No necesitas clave. Pienso con Gemini desde el servidor de Ray, puedo ver con la cámara y llevo tu agenda.', gemini: 'Gratis con límite diario. La clave sale de tu cuenta de Google en aistudio.google.com/api-keys.', openai: 'De pago por uso, aparte de ChatGPT Plus. La clave sale de platform.openai.com/api-keys.', claude: 'De pago por uso. La clave sale de platform.claude.com, en «API keys».' };
+      var pv = draft.provider || 'ray';
+      h = '<h2>Mi cerebro</h2><p>Elige con qué pienso. Lo más fácil es «Ray, sin clave».</p>' +
+        '<label class="f" for="sProv">Cerebro<select id="sProv"><option value="ray"' + (pv === 'ray' ? ' selected' : '') + '>Ray, sin clave (recomendado)</option><option value="gemini"' + (pv === 'gemini' ? ' selected' : '') + '>Gemini de Google</option><option value="openai"' + (pv === 'openai' ? ' selected' : '') + '>ChatGPT de OpenAI</option><option value="claude"' + (pv === 'claude' ? ' selected' : '') + '>Claude de Anthropic</option></select></label>' +
         '<p id="sHelp">' + esc(HELP[pv]) + '</p>' +
-        '<label class="f" for="sKey">Clave<input type="password" id="sKey" autocomplete="off" placeholder="Pega tu clave aquí" value="' + esc((draft.keys && draft.keys[pv]) || '') + '"></label>' +
-        '<label class="f" for="sModel">Modelo<input type="text" id="sModel" autocomplete="off" value="' + esc(draft.model) + '"></label>' +
+        '<label class="f" for="sKey"' + (pv === 'ray' ? ' hidden' : '') + '>Clave<input type="password" id="sKey" autocomplete="off" placeholder="Pega tu clave aquí" value="' + esc((draft.keys && draft.keys[pv]) || '') + '"></label>' +
+        '<label class="f" for="sModel"' + (pv === 'ray' ? ' hidden' : '') + '>Modelo<input type="text" id="sModel" autocomplete="off" value="' + esc(draft.model) + '"></label>' +
         '<p class="ver">Ray ' + esc(VERSION) + '</p>';
     }
     setupEl.innerHTML = h + nav;
@@ -724,7 +862,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (step < STEPS - 1) { step++; if (step === 2 && !draft.voice) { var v0 = voicesFor(draft.lang, draft.country)[0]; if (v0) draft.voice = v0.name; } renderStep(); }
       else closeSetup(true);
     };
-    if (step === 4) { $('sProv').onchange = function () { draft.keys = JSON.parse(JSON.stringify(draft.keys || {})); draft.keys[draft.provider || 'gemini'] = $('sKey').value.trim(); draft.provider = this.value; draft.model = MODELS[draft.provider]; renderStep(); }; }
+    if (step === 4) { $('sProv').onchange = function () { draft.keys = JSON.parse(JSON.stringify(draft.keys || {})); if ((draft.provider || 'ray') !== 'ray') draft.keys[draft.provider] = $('sKey').value.trim(); draft.provider = this.value; draft.model = MODELS[draft.provider]; renderStep(); }; }
     if (step === 1) {
       $('sCountry').onchange = function () { draft.country = this.value; var cl = countryLocale(draft.country); if (cl) { draft.lang = cl; draft.voice = ''; } renderStep(); };
       $('sLang').onchange = function () { draft.lang = this.value; draft.voice = ''; };
@@ -763,7 +901,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       }
     } else if (step === 1) { draft.country = $('sCountry').value; draft.lang = $('sLang').value || draft.lang; }
     else if (step === 2) { draft.pitch = Number($('sPitch').value) || 1; draft.rate = Number($('sRate').value) || 1; }
-    else if (step === 4) { var pk = $('sProv').value; draft.keys = JSON.parse(JSON.stringify(draft.keys || {})); draft.keys[pk] = $('sKey').value.trim(); draft.provider = pk; draft.key = draft.keys[pk]; draft.model = $('sModel').value.trim() || MODELS[pk]; }
+    else if (step === 4) { var pk = $('sProv').value; draft.keys = JSON.parse(JSON.stringify(draft.keys || {})); if (pk !== 'ray') draft.keys[pk] = $('sKey').value.trim(); draft.provider = pk; draft.key = draft.keys[pk] || ''; draft.model = pk === 'ray' ? MODELS.ray : ($('sModel').value.trim() || MODELS[pk]); }
     return true;
   }
   function openSetup() {
