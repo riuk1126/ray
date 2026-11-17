@@ -65,6 +65,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
 .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--accent); color: #FFFFFF; white-space: nowrap; }
 .err { color: #B3261E; font-size: 13px; min-height: 18px; margin: 0; }
 .ver { font-size: 12px; color: var(--ink-soft); text-align: center; }
+#sLocal { display: flex; flex-direction: column; gap: 8px; }
 [hidden] { display: none !important; }
 @media (prefers-reduced-motion: reduce) { body, .fade { transition: none; } }
 </style>
@@ -142,7 +143,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   // ---------- Ajustes guardados en el equipo ----------
-  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'ray', model: 'gemini-3.5-flash-lite', keys: {}, armed: true, rate: 1, pitch: 1, srvV1: false };
+  var DEF = { done: false, name: '', email: '', country: 'PE', lang: 'es-PE', voice: '', color: '#FF7A45', key: '', provider: 'ray', model: 'gemini-3.5-flash-lite', keys: {}, armed: true, rate: 1, pitch: 1, srvV1: false, local: '', localOn: true };
   var cfg = {}, facts = [], agenda = [];
   (function () {
     var k, s = null;
@@ -616,6 +617,43 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       throw e;
     });
   }
+  // ---------- Cerebro sin internet (respaldo, como OpenJarvis) ----------
+  // Un modelo Qwen 2.5 corre dentro del teléfono. Gemini sigue siendo el cerebro principal;
+  // el local responde solo si no hay internet o si Gemini falla.
+  var LOCALS = {
+    lite: { label: 'Liviano', mb: 550, file: 'Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task', repo: 'litert-community/Qwen2.5-0.5B-Instruct' },
+    plus: { label: 'Mejor', mb: 1600, file: 'Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task', repo: 'litert-community/Qwen2.5-1.5B-Instruct' }
+  };
+  function localUrl(k) { return 'https://huggingface.co/' + LOCALS[k].repo + '/resolve/main/' + LOCALS[k].file; }
+  function localNative() { return !!N && !!VERSION && !newer('1.5.0', VERSION); }
+  function localReady() { return localNative() && cfg.localOn !== false && !!LOCALS[cfg.local]; }
+  function localPrompt() {
+    // El modelo local tiene poca memoria de trabajo (1280 piezas entre pregunta y respuesta): instrucciones cortas
+    var now = new Date(), nice = '';
+    try { nice = now.toLocaleString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true }); } catch (e) { nice = now.toString(); }
+    var who = [];
+    if (cfg.name) who.push('Se llama ' + cfg.name + '.');
+    who = who.concat(facts.slice(-8));
+    var up = agendaText().split('\n').slice(0, 5).join('\n');
+    var sys = 'Eres Ray, un asistente de voz cálido y amable. Responde en español (' + (cfg.lang || 'es-PE') + '), como se habla, en una a tres oraciones cortas, sin listas, sin emojis y sin símbolos. Da consejos concretos y realistas. Ahora mismo no hay internet, así que piensas con tu cerebro del teléfono: si te piden algo que necesita internet o la cámara, dilo con sencillez.' +
+      '\nAhora es: ' + nice + '.' +
+      (who.length ? '\nSobre la persona: ' + who.join(' ') : '') +
+      '\nSu agenda: ' + up;
+    var h = messages().slice(-6), conv = h.map(function (m) { return (m.role === 'assistant' ? 'Ray: ' : 'Persona: ') + String(m.content).slice(0, 400); }).join('\n');
+    return sys.slice(0, 2200) + '\n\nConversación:\n' + conv + '\nRay:';
+  }
+  function localAsk() {
+    var L = LOCALS[cfg.local];
+    return N.localChat({ name: L.file, prompt: localPrompt(), maxTokens: 1280 }).then(function (r) {
+      var t = String((r && r.text) || '').replace(/^\s*Ray:\s*/i, '').split(/\n\s*Persona:/)[0].trim();
+      return t;
+    }, function (e) { throw { code: 'local', message: String((e && e.message) || e) }; });
+  }
+  function localWorthy(e) {
+    var c = String((e && e.code) || '');
+    return /^(red|tiempo|429|500|502|503|504|529)$/.test(c) || noSrvKey(e);
+  }
+
   function messages() {
     var h = hist.slice(-12);
     while (h.length && h[0].role !== 'user') h.shift();
@@ -687,6 +725,25 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     var t0 = Date.now(); rlog('ask', { n: text.length, prov: prov, model: model, stream: canStream(), img: !!shot });
     setFace('pensando'); setStatus('Pensando…'); replyEl.textContent = '';
     var gem = prov === 'ray' || prov === 'gemini';
+    function goLocal(why) {
+      rlog('local_ask', { why: why, m: cfg.local });
+      var tl = Date.now();
+      return localAsk().then(function (txt) {
+        rlog('local_ok', { ms: Date.now() - tl, n: txt.length });
+        var p = parse(txt);
+        if (!p.text) p.text = 'Me quedé en blanco. ¿Me lo repites?';
+        hist.push({ role: 'assistant', content: p.text });
+        speak(p.text, p.mood);
+      });
+    }
+    function localFailed(e) {
+      hist.pop();
+      rlog('local_err', { msg: String((e && e.message) || '').slice(0, 160) });
+      speak('No tengo internet y mi cerebro del teléfono no pudo responder. Inténtalo otra vez en un momento.', 'triste');
+      youEl.textContent = 'Detalle del error: local ' + String((e && e.message) || '').slice(0, 140);
+    }
+    // Sin internet: directo al cerebro del teléfono, sin esperar a que Gemini falle
+    if (navigator.onLine === false && localReady()) { goLocal('sin_red').catch(localFailed); return; }
     function tryStream(m, k) {
       return askStream(m, k, msgs).catch(function (e) {
         // Servidor sin clave todavía: usa la clave de Gemini guardada en el teléfono
@@ -709,13 +766,19 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       hist.push({ role: 'assistant', content: p.text });
       speak(p.text, p.mood);
     }, function (err) {
+      // Respaldo: si Gemini no responde (sin internet, límite, saturado), piensa el cerebro del teléfono
+      if (localReady() && localWorthy(err) && mode === 'thinking') {
+        rlog('brain_err', { ms: Date.now() - t0, code: String((err && err.code) || ''), local: true });
+        goLocal(String((err && err.code) || '')).catch(localFailed);
+        return;
+      }
       hist.pop();
       var code = String((err && err.code) || ''), msg = String((err && err.message) || '');
       rlog('brain_err', { ms: Date.now() - t0, code: code, msg: msg.slice(0, 160) });
       var t = 'No pude responder esta vez. Inténtalo de nuevo.';
       if (noSrvKey(err)) t = 'Todavía no tengo cerebro en el servidor. Pídele a Claude que me lo active, o pega una clave de Gemini en Ajustes.';
       else if (code === '401' || code === '403' || (code === '400' && /api key/i.test(msg))) t = 'La clave del cerebro no funciona. Revísala en Ajustes.';
-      else if (code === 'red') t = 'No tengo internet ahora. Revisa tu conexión.';
+      else if (code === 'red') t = 'No tengo internet ahora. Revisa tu conexión.' + (localNative() && !cfg.local ? ' En Ajustes puedes descargar mi cerebro sin internet.' : '');
       else if (code === 'tiempo') t = 'El cerebro tardó demasiado en responder. Inténtalo otra vez.';
       else if (code === '404') t = 'El modelo configurado no existe. Revísalo en Ajustes.';
       else if (code === '429' && /quota|billing|insufficient/i.test(msg) && !gem) t = 'Esa cuenta no tiene saldo. Recárgala para seguir.';
@@ -908,6 +971,8 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
         '<p id="sHelp">' + esc(HELP[pv]) + '</p>' +
         '<label class="f" for="sKey"' + (pv === 'ray' ? ' hidden' : '') + '>Clave<input type="password" id="sKey" autocomplete="off" placeholder="Pega tu clave aquí" value="' + esc((draft.keys && draft.keys[pv]) || '') + '"></label>' +
         '<label class="f" for="sModel"' + (pv === 'ray' ? ' hidden' : '') + '>Modelo<input type="text" id="sModel" autocomplete="off" value="' + esc(draft.model) + '"></label>' +
+        '<h2 style="margin-top:8px;">Cerebro sin internet</h2><p>Un respaldo que vive dentro del teléfono: sin clave, gratis y sin internet. Respondo con él solo cuando no hay conexión o mi cerebro principal falla. Es más simple que el principal y no ve con la cámara.</p>' +
+        '<div id="sLocal"><p>Revisando…</p></div>' +
         '<p class="ver">Ray ' + esc(VERSION) + '</p>';
     }
     setupEl.innerHTML = h + nav;
@@ -919,6 +984,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (step < STEPS - 1) { step++; if (step === 2 && !draft.voice) { var v0 = voicesFor(draft.lang, draft.country)[0]; if (v0) draft.voice = v0.name; } renderStep(); }
       else closeSetup(true);
     };
+    if (step === 4) paintLocal();
     if (step === 4) { $('sProv').onchange = function () { draft.keys = JSON.parse(JSON.stringify(draft.keys || {})); if ((draft.provider || 'ray') !== 'ray') draft.keys[draft.provider] = $('sKey').value.trim(); draft.provider = this.value; draft.model = MODELS[draft.provider]; renderStep(); }; }
     if (step === 1) {
       $('sCountry').onchange = function () { draft.country = this.value; var cl = countryLocale(draft.country); if (cl) { draft.lang = cl; draft.voice = ''; } renderStep(); };
@@ -949,6 +1015,82 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       setFace('feliz');
     } else if (step !== 2) setFace('neutral');
   }
+  var dlKey = '', dlPct = -1, dlErr = '';
+  function setLocal(k, on) {
+    cfg.local = k; if (on !== undefined) cfg.localOn = on; save();
+    if (draft) { draft.local = cfg.local; draft.localOn = cfg.localOn; }
+  }
+  function gb(b) { return b >= 1073741824 ? (Math.round(b / 107374182.4) / 10) + ' GB' : Math.round(b / 1048576) + ' MB'; }
+  function paintLocal() {
+    var box = $('sLocal');
+    if (!box) return;
+    if (!localNative()) {
+      box.innerHTML = '<p>' + (updUrl ? 'Necesito la versión nueva de Ray para esto. Cierra Ajustes y toca «Actualizar».' : 'Esto llega con Ray 1.5. Cuando aparezca el botón «Actualizar», tócalo.') + '</p>';
+      return;
+    }
+    if (dlKey) {
+      box.innerHTML = '<p id="sLocalP">Descargando el cerebro ' + esc(LOCALS[dlKey].label.toLowerCase()) + '… ' + (dlPct >= 0 ? dlPct + '%' : '') + '</p><p>Puedes cerrar Ajustes y seguir hablando conmigo mientras tanto.</p>';
+      return;
+    }
+    N.localInfo().then(function (inf) {
+      if (!$('sLocal') || dlKey) return;
+      var have = {};
+      ((inf && inf.files) || []).forEach(function (f) { have[f.name] = f.size; });
+      if (cfg.local && (!LOCALS[cfg.local] || !have[LOCALS[cfg.local].file])) setLocal('');
+      if (!cfg.local) { for (var k0 in LOCALS) if (have[LOCALS[k0].file]) { setLocal(k0); break; } }
+      var free = inf && inf.free > 0 ? ' Espacio libre en el teléfono: ' + gb(inf.free) + '.' : '';
+      var h = '';
+      if (cfg.local) {
+        var L = LOCALS[cfg.local];
+        h = '<p>Instalado: cerebro ' + esc(L.label.toLowerCase()) + ' (' + gb(have[L.file]) + ').</p>' +
+          '<div class="row"><button class="btn" id="sLocOn" type="button" aria-pressed="' + (cfg.localOn !== false ? 'true' : 'false') + '">' + (cfg.localOn !== false ? 'Respaldo activado' : 'Respaldo apagado') + '</button>' +
+          '<button class="btn" id="sLocDel" type="button">Borrar</button></div>';
+        var other = cfg.local === 'lite' ? 'plus' : 'lite';
+        h += '<button class="btn" type="button" data-dl="' + other + '">Cambiar al ' + esc(LOCALS[other].label.toLowerCase()) + ' · ' + gb(LOCALS[other].mb * 1048576) + '</button>';
+      } else {
+        h = '<p>Elige uno. El liviano va en casi cualquier celular; el mejor responde mejor, pero pide un teléfono con 6 GB de RAM o más. Usa Wi-Fi: si se corta, toca otra vez y sigue donde quedó.' + esc(free) + '</p>' +
+          '<button class="btn" type="button" data-dl="lite">Descargar liviano · 550 MB</button>' +
+          '<button class="btn" type="button" data-dl="plus">Descargar mejor · 1.6 GB</button>';
+      }
+      if (dlErr) h += '<p class="err">' + esc(dlErr) + '</p>';
+      box.innerHTML = h;
+      if ($('sLocOn')) $('sLocOn').onclick = function () { setLocal(cfg.local, cfg.localOn === false); paintLocal(); };
+      if ($('sLocDel')) $('sLocDel').onclick = function () { N.localDelete().then(function () { setLocal(''); paintLocal(); }, function () { paintLocal(); }); };
+      Array.prototype.forEach.call(box.querySelectorAll('[data-dl]'), function (b) {
+        b.onclick = function () { localDownload(b.getAttribute('data-dl')); };
+      });
+    }, function () { if ($('sLocal')) $('sLocal').innerHTML = '<p>No pude revisar el cerebro sin internet.</p>'; });
+  }
+  function localDownload(k) {
+    if (!LOCALS[k] || dlKey) return;
+    var prev = cfg.local;
+    dlKey = k; dlPct = -1; dlErr = '';
+    rlog('local_dl', { k: k });
+    paintLocal();
+    N.localDownload({ url: localUrl(k), name: LOCALS[k].file }).then(function () {
+      dlKey = '';
+      rlog('local_dl_ok', { k: k });
+      // Si cambió de modelo, borra el anterior para no ocupar doble espacio
+      var old = prev && prev !== k ? LOCALS[prev].file : '';
+      setLocal(k, true);
+      if (old) N.localDelete({ keep: LOCALS[k].file }).then(paintLocal, paintLocal);
+      else paintLocal();
+      if (!setupOpen && mode === 'idle') speak('Listo, ya tengo mi cerebro sin internet. Si te quedas sin conexión, igual puedo conversar contigo.', 'feliz');
+    }, function (e) {
+      var m = String((e && e.message) || '');
+      dlKey = '';
+      rlog('local_dl_err', { k: k, m: m.slice(0, 120) });
+      dlErr = /sin_espacio/.test(m) ? 'No hay espacio suficiente en el teléfono. Libera espacio o elige el liviano.'
+        : /HTTP 40[134]/.test(m) ? 'No pude bajar ese modelo ahora. Prueba con el otro o más tarde.'
+        : 'Se cortó la descarga. Toca otra vez para seguir donde quedó.';
+      paintLocal();
+    });
+  }
+  if (N) N.addListener('llmProgress', function (d) {
+    dlPct = Number(d && d.p) || 0;
+    var p = $('sLocalP');
+    if (p && dlKey) p.textContent = 'Descargando el cerebro ' + LOCALS[dlKey].label.toLowerCase() + '… ' + dlPct + '%';
+  });
   function keep(validate) {
     if (step === 0) {
       draft.name = $('sName').value.trim(); draft.email = $('sMail').value.trim().toLowerCase();

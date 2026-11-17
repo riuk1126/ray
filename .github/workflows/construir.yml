@@ -51,6 +51,9 @@ jobs:
               convert full.png -resize ${L}x${L} $DIR/ic_launcher_round.png || true
             done
           fi
+          # Cerebro local (sin internet): motor MediaPipe LLM Inference; necesita Android 7 (API 24) o más
+          sed -i 's/minSdkVersion = [0-9]*/minSdkVersion = 24/' android/variables.gradle
+          grep -q 'tasks-genai' android/app/build.gradle || printf "\ndependencies {\n    implementation 'com.google.mediapipe:tasks-genai:0.10.27'\n}\n" >> android/app/build.gradle
           CODE=$(node -p "const [a,b,c]=require('./package.json').version.split('.').map(Number);a*10000+b*100+c")
           sed -i "s/versionCode [0-9]*/versionCode $CODE/; s/versionName \"[^\"]*\"/versionName \"$V\"/" android/app/build.gradle
           npx cap sync android

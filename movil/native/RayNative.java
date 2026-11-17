@@ -39,6 +39,8 @@ import java.util.Locale;
 import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import android.os.StatFs;
+import com.google.mediapipe.tasks.genai.llminference.LlmInference;
 
 // Puente de Ray: oído (reconocimiento de voz), voz (texto a voz) y cerebro (API de Claude)
 @CapacitorPlugin(
@@ -103,6 +105,7 @@ public class RayNative extends Plugin {
     unmuteBeep();
     try { if (rec != null) { rec.destroy(); rec = null; } } catch (Exception e) { }
     try { if (tts != null) { tts.stop(); tts.shutdown(); } } catch (Exception e) { }
+    try { if (llm != null) { llm.close(); llm = null; } } catch (Exception e) { }
   }
 
   @PluginMethod
@@ -325,6 +328,145 @@ public class RayNative extends Plugin {
   public void stopSpeak(PluginCall call) {
     try { if (tts != null) tts.stop(); } catch (Exception e) { }
     call.resolve();
+  }
+
+  // ---------- Cerebro local (sin internet, como OpenJarvis) ----------
+  // Un modelo pequeño (Qwen 2.5) corre dentro del teléfono con MediaPipe LLM Inference.
+  // El archivo del modelo se descarga una sola vez desde Ajustes y queda en la memoria interna de la app.
+  private LlmInference llm;
+  private String llmFile = "";
+  private volatile boolean llmDownloading = false;
+  private final Object llmLock = new Object();
+
+  private File llmDir() { File d = new File(getContext().getFilesDir(), "cerebro"); d.mkdirs(); return d; }
+  private static boolean safeName(String n) { return n != null && n.matches("[A-Za-z0-9._\\-]+\\.task"); }
+
+  @PluginMethod
+  public void localInfo(PluginCall call) {
+    JSObject r = new JSObject();
+    JSArray files = new JSArray();
+    File[] fs = llmDir().listFiles();
+    if (fs != null) for (File f : fs) {
+      if (f.getName().endsWith(".task")) { JSObject o = new JSObject(); o.put("name", f.getName()); o.put("size", f.length()); files.put(o); }
+    }
+    r.put("files", files);
+    r.put("loaded", llm != null ? llmFile : "");
+    r.put("downloading", llmDownloading);
+    try { StatFs st = new StatFs(getContext().getFilesDir().getPath()); r.put("free", st.getAvailableBytes()); } catch (Exception e) { r.put("free", -1); }
+    call.resolve(r);
+  }
+
+  // Descarga el modelo con reanudación: si se corta, al volver a tocar sigue donde quedó
+  @PluginMethod
+  public void localDownload(final PluginCall call) {
+    final String url = call.getString("url", "");
+    final String name = call.getString("name", "");
+    if (url == null || !url.startsWith("https://huggingface.co/") || !safeName(name)) { call.reject("parametros"); return; }
+    if (llmDownloading) { call.reject("ya_descargando"); return; }
+    llmDownloading = true;
+    new Thread(() -> {
+      HttpURLConnection c = null;
+      try {
+        File done = new File(llmDir(), name), part = new File(llmDir(), name + ".part");
+        if (done.exists() && done.length() > 0) { JSObject r = new JSObject(); r.put("status", "ok"); r.put("size", done.length()); call.resolve(r); return; }
+        long have = part.exists() ? part.length() : 0;
+        String u = url;
+        int code = 0;
+        for (int k = 0; k < 8; k++) {
+          c = (HttpURLConnection) new URL(u).openConnection();
+          c.setInstanceFollowRedirects(false);
+          c.setConnectTimeout(20000);
+          c.setReadTimeout(60000);
+          if (have > 0) c.setRequestProperty("Range", "bytes=" + have + "-");
+          code = c.getResponseCode();
+          if (code >= 300 && code < 400) { u = new URL(new URL(u), c.getHeaderField("Location")).toString(); c.disconnect(); continue; }
+          break;
+        }
+        if (code == 416) { have = 0; part.delete(); throw new Exception("reintentar"); }
+        if (code != 200 && code != 206) throw new Exception("HTTP " + code);
+        if (code == 200) have = 0; // el servidor no aceptó reanudar: empieza de cero
+        long len = c.getContentLengthLong();
+        long total = len > 0 ? have + len : -1;
+        try {
+          StatFs st = new StatFs(getContext().getFilesDir().getPath());
+          if (len > 0 && st.getAvailableBytes() < len + 200L * 1024 * 1024) throw new Exception("sin_espacio");
+        } catch (IllegalArgumentException e) { }
+        InputStream in = c.getInputStream();
+        FileOutputStream out = new FileOutputStream(part, have > 0);
+        byte[] buf = new byte[131072];
+        long got = have; int n; int last = -1;
+        while ((n = in.read(buf)) > 0) {
+          out.write(buf, 0, n);
+          got += n;
+          if (total > 0) {
+            int pc = (int) (got * 100 / total);
+            if (pc != last) { last = pc; JSObject p = new JSObject(); p.put("p", pc); p.put("got", got); p.put("total", total); notifyListeners("llmProgress", p); }
+          }
+        }
+        out.close(); in.close();
+        if (total > 0 && got < total) throw new Exception("incompleto");
+        if (!part.renameTo(done)) throw new Exception("no_guardado");
+        JSObject r = new JSObject(); r.put("status", "ok"); r.put("size", done.length());
+        call.resolve(r);
+      } catch (Exception e) {
+        call.reject(String.valueOf(e.getMessage()));
+      } finally {
+        if (c != null) c.disconnect();
+        llmDownloading = false;
+      }
+    }).start();
+  }
+
+  @PluginMethod
+  public void localDelete(PluginCall call) {
+    // keep: nombre de un modelo que no se borra (al cambiar de modelo se borra solo el anterior)
+    final String keep = call.getString("keep", "");
+    if (llmDownloading) { call.reject("descargando"); return; }
+    synchronized (llmLock) {
+      if (keep == null || keep.isEmpty() || !keep.equals(llmFile)) {
+        try { if (llm != null) llm.close(); } catch (Exception e) { }
+        llm = null; llmFile = "";
+      }
+      File[] fs = llmDir().listFiles();
+      if (fs != null) for (File f : fs) { if (keep == null || !f.getName().equals(keep)) f.delete(); }
+    }
+    call.resolve();
+  }
+
+  // Responde con el modelo del teléfono. Solo uno a la vez.
+  @PluginMethod
+  public void localChat(final PluginCall call) {
+    final String name = call.getString("name", "");
+    final String prompt = call.getString("prompt", "");
+    final Integer maxTokens = call.getInt("maxTokens", 1280);
+    if (!safeName(name) || prompt == null || prompt.isEmpty()) { call.reject("parametros"); return; }
+    new Thread(() -> {
+      synchronized (llmLock) {
+        try {
+          File f = new File(llmDir(), name);
+          if (!f.exists()) { call.reject("sin_modelo"); return; }
+          if (llm == null || !name.equals(llmFile)) {
+            try { if (llm != null) llm.close(); } catch (Exception e) { }
+            llm = null;
+            LlmInference.LlmInferenceOptions opts = LlmInference.LlmInferenceOptions.builder()
+              .setModelPath(f.getAbsolutePath())
+              .setMaxTokens(maxTokens == null ? 1280 : maxTokens)
+              .setMaxTopK(40)
+              .build();
+            llm = LlmInference.createFromOptions(getContext(), opts);
+            llmFile = name;
+          }
+          String out = llm.generateResponse(prompt);
+          JSObject r = new JSObject();
+          r.put("text", out == null ? "" : out);
+          call.resolve(r);
+        } catch (Throwable e) {
+          try { if (llm != null) llm.close(); } catch (Exception e2) { }
+          llm = null; llmFile = "";
+          call.reject(String.valueOf(e.getMessage()), "local");
+        }
+      }
+    }).start();
   }
 
   // ---------- Cerebro ----------
