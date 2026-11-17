@@ -246,7 +246,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   var faceG = $('face'), ovalL = $('ovalL'), ovalR = $('ovalR'), arcL = $('arcL'), arcR = $('arcR');
   var mCurve = $('mCurve'), mOpen = $('mOpen'), mO = $('mO');
   var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var cur = { m: BASE.m.slice(), open: 1 }, expr = 'neutral', talking = false, mouthShown = '';
+  var cur = { m: BASE.m.slice(), open: 1, wide: 1 }, expr = 'neutral', talking = false, mouthShown = '';
   NUM.forEach(function (k) { cur[k] = BASE[k]; });
   var blinkAt = performance.now() + 2500;
 
@@ -302,13 +302,64 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       mOpen.setAttribute('opacity', want === 'open' ? 1 : 0);
       mO.setAttribute('opacity', want === 'o' ? 1 : 0);
     }
-    var openTarget = 1;
-    if (talking) openTarget = still ? 0.7 : 0.55 + 0.3 * Math.sin(t / 95) + 0.15 * Math.sin(t / 43);
+    var openTarget = 1, wideTarget = 1;
+    if (talking) { var vz = lipAt(t); openTarget = still ? 0.7 : vz[0]; wideTarget = still ? 0.85 : vz[1]; }
     else if (f.mouth !== 'open') openTarget = 0.5;
-    cur.open += (openTarget - cur.open) * (still ? 1 : 0.35);
-    var sc = Math.max(0.2, cur.open), wsc = (talking && f.mouth !== 'open') ? 0.72 : 1;
+    var le = still ? 1 : (talking ? 0.5 : 0.35);
+    cur.open += (openTarget - cur.open) * le;
+    cur.wide += (wideTarget - cur.wide) * le;
+    var sc = Math.max(talking ? 0.07 : 0.2, cur.open), wsc = (talking ? cur.wide : 1) * ((talking && f.mouth !== 'open') ? 0.8 : 1);
     mOpen.setAttribute('transform', 'translate(190 194) scale(' + r(wsc) + ' ' + (Math.round(sc * wsc * 100) / 100) + ') translate(-190 -194)');
     requestAnimationFrame(draw);
+  }
+
+  // ---------- Boca sincronizada con la voz ----------
+  // Cada letra tiene su forma de boca: [apertura, ancho]. La "a" abre grande, la "o" y la "u" redondean,
+  // la "m", "b" y "p" cierran los labios; espacios y signos son pausas cortas.
+  var utt = {}, lip = null, uttN = 0;
+  function newUtt(text) { var id = 'ru' + (++uttN) + '_' + Date.now().toString(36); utt[id] = { text: String(text || ''), rate: Number(cfg.rate) || 1 }; return id; }
+  function vis(ch) {
+    ch = (ch || '').toLowerCase();
+    if (/[aáà]/.test(ch)) return [1, 1];
+    if (/[eéè]/.test(ch)) return [0.68, 1.08];
+    if (/[iíy]/.test(ch)) return [0.42, 1.12];
+    if (/[oóò]/.test(ch)) return [0.8, 0.66];
+    if (/[uúü]/.test(ch)) return [0.5, 0.56];
+    if (/[mbp]/.test(ch)) return [0.04, 0.95];
+    if (/[fv]/.test(ch)) return [0.16, 1];
+    if (/[lnrtdsszcçkgjqxñh]/.test(ch)) return [0.3, 1];
+    if (/[0-9]/.test(ch)) return [0.6, 0.95];
+    if (/[,;:]/.test(ch)) return [0.06, 0.95];
+    if (/[.!?¡¿…\n]/.test(ch)) return [0.04, 0.95];
+    return [0.12, 0.95]; // espacio
+  }
+  function lipAt(t) {
+    if (!lip) return [0.12, 0.95];
+    if (lip.holdEnd) {
+      if (t < lip.holdEnd) return [0.05, 0.95]; // pausa de coma o punto: labios casi cerrados
+      lip.from = lip.holdIdx + 1; lip.at = t; lip.holdEnd = 0; lip.done = lip.holdIdx;
+    }
+    var pos = lip.from + (t - lip.at) * lip.cps / 1000;
+    if (lip.until >= 0 && pos >= lip.until) return [0.1, 0.95]; // terminó la palabra: espera la siguiente
+    var i = Math.floor(pos), txt = lip.text, ch = txt.charAt(i);
+    if (i >= txt.length) return [0.08, 0.95];
+    // Sin aviso por palabra, el teléfono igual hace una pausa en los signos: la imitamos
+    if (!lip.words && /[.!?…,;:]/.test(ch) && lip.done !== i) { lip.holdIdx = i; lip.holdEnd = t + (/[,;:]/.test(ch) ? 170 : 320) / (utt[lip.id] ? utt[lip.id].rate : 1); return [0.05, 0.95]; }
+    var v = vis(ch), nx = vis(txt.charAt(i + 1)), fr = (pos - i) * 0.35;
+    return [v[0] + (nx[0] - v[0]) * fr, v[1] + (nx[1] - v[1]) * fr];
+  }
+  function lipStart(id) {
+    var u = utt[id];
+    talking = true;
+    lip = u ? { text: u.text, from: 0, at: performance.now(), cps: 14.5 * u.rate, until: -1, id: id, words: false } : { text: 'aeaoaeaoa', from: 0, at: performance.now(), cps: 12, until: -1, id: id };
+  }
+  function lipWord(id, s, e) {
+    if (!lip || lip.id !== id) { if (!utt[id]) return; lipStart(id); }
+    var now = performance.now();
+    // Ajusta la velocidad a lo que de verdad tarda el teléfono en decir cada palabra
+    if (lip.words && lip.lastS >= 0 && s > lip.lastS) { var real = (s - lip.lastS) / ((now - lip.lastAt) / 1000); if (real > 4 && real < 40) lip.cps = lip.cps * 0.6 + real * 0.4; }
+    lip.words = true; lip.lastS = s; lip.lastAt = now;
+    lip.from = s; lip.at = now; lip.until = e; lip.hold = 0;
   }
   function setAccent(c) { if (/^#[0-9a-fA-F]{6}$/.test(c || '')) document.documentElement.style.setProperty('--accent', c); }
   setAccent(cfg.color);
@@ -359,7 +410,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     stream = null; clearTimeout(earlyTimer);
     clearTimeout(againTimer); clearTimeout(speakTimer);
     if (N) { try { N.stopListen(); } catch (e) {} try { N.stopSpeak(); } catch (e) {} }
-    talking = false; mode = 'idle'; manual = false;
+    talking = false; lip = null; mode = 'idle'; manual = false;
   }
 
   var RULES = [
@@ -403,7 +454,7 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
     if (mode !== 'speaking') return;
     stream = null;
     clearTimeout(speakTimer); clearTimeout(startTimer);
-    talking = false; mode = 'idle'; lastTalk = Date.now();
+    talking = false; lip = null; mode = 'idle'; lastTalk = Date.now();
     convoUntil = Date.now() + 25000;
     clearTimeout(calmTimer);
     startListen();
@@ -413,17 +464,19 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function speak(text, mood) {
     clearTimeout(againTimer);
     mode = 'speaking'; lastMood = mood || 'neutral';
-    setFace(lastMood === 'neutral' ? 'habla' : lastMood); talking = true; setStatus('');
+    setFace(lastMood === 'neutral' ? 'habla' : lastMood); talking = false; lip = null; setStatus('');
     replyEl.textContent = text;
     clearTimeout(speakTimer);
     speakTimer = setTimeout(function () { finishSpeak(); }, 3000 + text.length * 110);
     if (!N) return;
     spoke = false;
     var payload = { text: text.slice(0, 3500), voice: cfg.voice || '', lang: cfg.lang || 'es-PE', rate: Number(cfg.rate) || 1, pitch: Number(cfg.pitch) || 1 };
+    payload.id = newUtt(payload.text);
     function plain(why) {
       if (mode !== 'speaking' || spoke) return;
       setStatus(why);
-      N.speak({ text: payload.text, voice: '', lang: payload.lang, rate: 1, pitch: 1 }).catch(function () { setStatus('No puedo hablar: este equipo no tiene voz instalada. Instala «Servicios de voz de Google».'); });
+      var pid = newUtt(payload.text); utt[pid].rate = 1;
+      N.speak({ text: payload.text, voice: '', lang: payload.lang, rate: 1, pitch: 1, id: pid }).catch(function () { setStatus('No puedo hablar: este equipo no tiene voz instalada. Instala «Servicios de voz de Google».'); });
     }
     clearTimeout(startTimer);
     startTimer = setTimeout(function () { plain('Mi voz elegida no sonó; uso la del sistema. Sube el volumen multimedia o cambia la voz en Ajustes.'); }, 3000);
@@ -513,12 +566,12 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function sayPart(text, first) {
     text = text.replace(/[*_#`]/g, '').trim();
     if (!text || !stream) return;
-    var id = 'rs' + Date.now() + Math.random().toString(36).slice(2, 6);
+    var id = newUtt(text);
     stream.ids[id] = 1; stream.pending++;
     if (first) {
       clearTimeout(againTimer);
       mode = 'speaking'; lastMood = stream.mood || 'neutral';
-      setFace(lastMood === 'neutral' ? 'habla' : lastMood); talking = true; setStatus('');
+      setFace(lastMood === 'neutral' ? 'habla' : lastMood); talking = false; lip = null; setStatus('');
     }
     stream.chars += text.length;
     clearTimeout(speakTimer);
@@ -713,9 +766,12 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
       if (c === 6 || c === 7) errCount = 0; else errCount++;
       again(c === 8 ? 900 : (c === 2 || c === 1 || c === 4 || c === 11 || c === 5) ? Math.min(8000, 1000 + 1000 * errCount) : 350);
     });
-    N.addListener('speakStart', function (d) { spoke = true; clearTimeout(startTimer); rlog('speak_start', { id: d && d.id }); });
+    N.addListener('speakStart', function (d) { spoke = true; clearTimeout(startTimer); lipStart(d && d.id); rlog('speak_start', { id: d && d.id }); });
+    N.addListener('speakWord', function (d) { if (d) lipWord(d.id, Number(d.s) || 0, Number(d.e) || 0); });
     N.addListener('speakEnd', function (d) {
       var id = d && d.id;
+      if (lip && lip.id === id) lip = null;
+      if (id) delete utt[id];
       rlog('speak_end', { id: id, stream: !!stream });
       if (stream && id && stream.ids[id]) {
         delete stream.ids[id]; stream.pending--;
@@ -813,10 +869,11 @@ input[type="range"] { width: 100%; accent-color: var(--ink); }
   function sample(v) {
     if (!N) return;
     var t = SAMPLE[langOf(draft.lang)] || SAMPLE.en;
-    setFace('feliz'); talking = true;
+    setFace('feliz'); talking = false; lip = null;
     clearTimeout(speakTimer);
-    speakTimer = setTimeout(function () { talking = false; setFace('neutral'); }, 4500);
-    N.speak({ text: t, voice: v || '', lang: draft.lang, rate: Number(draft.rate) || 1, pitch: Number(draft.pitch) || 1 }).catch(function () {});
+    speakTimer = setTimeout(function () { talking = false; lip = null; setFace('neutral'); }, 4500);
+    var sid = newUtt(t); utt[sid].rate = Number(draft.rate) || 1;
+    N.speak({ text: t, voice: v || '', lang: draft.lang, rate: Number(draft.rate) || 1, pitch: Number(draft.pitch) || 1, id: sid }).catch(function () {});
   }
   var STEPS = 5;
   function renderStep() {

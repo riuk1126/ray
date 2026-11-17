@@ -91,6 +91,8 @@ public class RayNative extends Plugin {
           @Override public void onStart(String id) { JSObject d = new JSObject(); d.put("id", id); ev("speakStart", d); }
           @Override public void onDone(String id) { JSObject d = new JSObject(); d.put("id", id); ev("speakEnd", d); }
           @Override public void onError(String id) { JSObject d = new JSObject(); d.put("id", id); ev("speakEnd", d); }
+          // Android 8+: avisa qué parte del texto está pronunciando, para mover la boca palabra por palabra
+          @Override public void onRangeStart(String id, int start, int end, int frame) { JSObject d = new JSObject(); d.put("id", id); d.put("s", start); d.put("e", end); ev("speakWord", d); }
         });
       }
     });
